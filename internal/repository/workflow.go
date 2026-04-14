@@ -45,7 +45,6 @@ func (r *workflowRepository) getDB(ctx context.Context) postgres.PgxExecutor {
 
 func (r *workflowRepository) Create(ctx context.Context, workflow *model.Workflow) error {
 	workflow.IsCurrent = true
-	workflow.Version = 1
 	workflow.IsActive = true
 
 	query, args, err := r.sq.

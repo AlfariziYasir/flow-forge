@@ -76,21 +76,24 @@ func (s *tenantService) Get(ctx context.Context, id string) (*model.TenantRespon
 func (s *tenantService) List(ctx context.Context, req model.ListTenantRequest) ([]*model.TenantResponse, int, string, error) {
 	var offset uint64 = 0
 	if req.PageToken != "" {
-		decoded, _ := base64.StdEncoding.DecodeString(req.PageToken)
-		offset, _ = strconv.ParseUint(string(decoded), 10, 64)
+		decoded, err := base64.StdEncoding.DecodeString(req.PageToken)
+		if err != nil {
+			return nil, 0, "", errorx.NewError(errorx.ErrTypeValidation, "invalid page token", err)
+		}
+		offset, err = strconv.ParseUint(string(decoded), 10, 64)
+		if err != nil {
+			return nil, 0, "", errorx.NewError(errorx.ErrTypeValidation, "invalid page token", err)
+		}
 	}
 
-	filters := map[string]any{
-		"role": string(model.RoleAdmin),
-	}
-
+	filters := make(map[string]any, 0)
 	if req.TenantName != "" {
 		filters["name"] = req.TenantName
 	}
 
 	tenants, count, err := s.tRepo.List(ctx, uint64(req.PageSize), offset, filters)
 	if err != nil {
-		s.log.Error("failed to get list user", zap.Error(err))
+		s.log.Error("failed to get list tenant", zap.Error(err))
 		return nil, 0, "", err
 	}
 
@@ -104,7 +107,13 @@ func (s *tenantService) List(ctx context.Context, req model.ListTenantRequest) (
 			UpdatedAt: tenant.UpdatedAt,
 		})
 	}
-	return tenantResponses, count, "", nil
+	nextPageToken := ""
+	if count == int(req.PageSize) {
+		nextOffset := offset + uint64(req.PageSize)
+		nextPageToken = base64.StdEncoding.EncodeToString([]byte(strconv.FormatUint(nextOffset, 10)))
+	}
+
+	return tenantResponses, count, nextPageToken, nil
 }
 
 func (s *tenantService) Update(ctx context.Context, req model.TenantRequest) (*model.TenantResponse, error) {
