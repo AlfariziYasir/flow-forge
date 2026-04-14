@@ -6,7 +6,6 @@ import (
 	"log"
 
 	"flowforge/internal/model"
-	"flowforge/pkg/postgres"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"

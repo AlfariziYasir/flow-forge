@@ -50,7 +50,7 @@ func main() {
 
 	wfService := services.NewWorkflowService(wfRepo, execRepo, sExecRepo, uow, l)
 	
-	execEngine := workerService.NewExecutionEngine(execRepo, sExecRepo, l)
+	execEngine := workerService.NewExecutionEngine(execRepo, sExecRepo, uow, l)
 	jobPoller := workerHandler.NewJobPoller(execRepo, wfRepo, uow, execEngine, l, 5*time.Second)
 
 	// Start Background Worker Poller

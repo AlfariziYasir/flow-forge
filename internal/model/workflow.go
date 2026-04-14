@@ -43,13 +43,6 @@ func (w *Workflow) Values() []any {
 }
 
 type WorkflowRequest struct {
-	TenantID      string          `json:"tenant_id"`
-	Name          string          `json:"name"`
-	Description   string          `json:"description"`
-	DAGDefinition json.RawMessage `json:"dag_definition"`
-}
-
-type WorkflowUpdateRequest struct {
 	TenantID       string          `json:"tenant_id"`
 	Name           string          `json:"name"`
 	Description    string          `json:"description"`
@@ -95,4 +88,11 @@ type StepDefinition struct {
 	Parameters map[string]any `json:"parameters"`
 	DependsOn  []string       `json:"depends_on"`
 	MaxRetries int            `json:"max_retries"`
+}
+
+type ListWorkflowRequest struct {
+	PageSize     uint64 `json:"page_size"`
+	PageToken    string `json:"page_token"`
+	TenantID     string `json:"-"`
+	WorkflowName string `json:"workflow_name"`
 }
