@@ -148,11 +148,20 @@ func (s *userService) Refresh(ctx context.Context, refUuid, userId, role, tenant
 		s.log.Error("refresh token value is empty")
 		return "", errorx.NewError(errorx.ErrTypeUnauthorized, "token invalid", errors.New("refresh token value is empty"))
 	}
-	json.Unmarshal([]byte(string(value)), &cache)
+	if err := json.Unmarshal([]byte(string(value)), &cache); err != nil {
+		s.log.Error("failed to unmarshal cache value", zap.Error(err))
+		return "", errorx.NewError(errorx.ErrTypeInternal, "internal server error", err)
+	}
+
+	accUuid, ok := cache["acc_uuid"].(string)
+	if !ok {
+		s.log.Error("acc_uuid not found in cache or not a string")
+		return "", errorx.NewError(errorx.ErrTypeUnauthorized, "token invalid", nil)
+	}
 
 	err = s.cache.Set(
 		ctx,
-		fmt.Sprintf("%s:%s", jwt.BlacklistKey, cache["acc_uuid"].(string)),
+		fmt.Sprintf("%s:%s", jwt.BlacklistKey, accUuid),
 		"revoked",
 		s.cfg.AccessTokenExp,
 	)
@@ -165,6 +174,7 @@ func (s *userService) Refresh(ctx context.Context, refUuid, userId, role, tenant
 		AccUuid:     uuid.New().String(),
 		AccKey:      s.cfg.AccessTokenKey,
 		AccDuration: s.cfg.AccessTokenExp,
+		RefDuration: s.cfg.RefreshTokenExp,
 	}
 	acc, err := jwt.AccessToken(
 		baseToken,
@@ -212,13 +222,13 @@ func (s *userService) Create(ctx context.Context, req model.UserRequest) (*model
 
 	switch executorRole {
 	case string(model.RoleAdmin):
-		if req.Role != "editor" && req.Role != "viewer" && req.Role != "admin" {
+		if req.Role != string(model.RoleEditor) && req.Role != string(model.RoleViewer) && req.Role != string(model.RoleAdmin) {
 			return nil, errorx.NewValidationError(map[string]string{
 				"role": "admin can only create admin, editor or viewer role",
 			})
 		}
 	case string(model.RoleEditor):
-		if req.Role != "viewer" {
+		if req.Role != string(model.RoleViewer) {
 			return nil, errorx.NewValidationError(map[string]string{
 				"role": "editor can only create user with viewer role",
 			})
@@ -302,12 +312,20 @@ func (s *userService) Get(ctx context.Context, id string) (*model.UserResponse, 
 func (s *userService) List(ctx context.Context, req model.ListRequest) ([]*model.UserResponse, int, string, error) {
 	var offset uint64 = 0
 	if req.PageToken != "" {
-		decoded, _ := base64.StdEncoding.DecodeString(req.PageToken)
-		offset, _ = strconv.ParseUint(string(decoded), 10, 64)
+		decoded, err := base64.StdEncoding.DecodeString(req.PageToken)
+		if err != nil {
+			return nil, 0, "", errorx.NewError(errorx.ErrTypeValidation, "invalid page token", err)
+		}
+		offset, err = strconv.ParseUint(string(decoded), 10, 64)
+		if err != nil {
+			return nil, 0, "", errorx.NewError(errorx.ErrTypeValidation, "invalid page token", err)
+		}
 	}
 
-	filters := make(map[string]any)
-	if req.Role != string(model.RoleAdmin) {
+	filters := map[string]any{
+		"tenant_id": req.TenantID,
+	}
+	if req.Role != "" {
 		filters["role"] = req.Role
 	}
 

@@ -58,7 +58,12 @@ func (h *WorkflowHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *WorkflowHandler) List(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.Context().Value("tenant_id").(string)
 	
-	dtos, _, err := h.ws.List(r.Context(), tenantID, 50, 0, "")
+	req := model.ListWorkflowRequest{
+		TenantID: tenantID,
+		PageSize: 50,
+	}
+
+	dtos, _, _, err := h.ws.List(r.Context(), req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

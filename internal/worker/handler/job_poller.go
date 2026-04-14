@@ -64,7 +64,7 @@ func (p *JobPoller) poll(ctx context.Context) {
 	defer p.uow.Rollback(txCtx) // automatically ignored if committed
 
 	// Acquire up to 5 executions per tick globally (tenant="" skips where tenant_id)
-	executions, err := p.execRepo.AcquireForWorker(txCtx, "", 5)
+	executions, err := p.execRepo.AcquireForWorker(txCtx, 5)
 	if err != nil {
 		p.l.Error("failed to acquire executions", zap.Error(err))
 		return
@@ -84,6 +84,7 @@ func (p *JobPoller) poll(ctx context.Context) {
 			p.l.Error("failed to update execution to RUNNING in tx", zap.Error(err))
 			continue
 		}
+		exe.Version++
 	}
 
 	if err := p.uow.Commit(txCtx); err != nil {

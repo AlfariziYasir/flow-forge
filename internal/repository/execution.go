@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"flowforge/internal/model"
@@ -18,9 +17,7 @@ type ExecutionRepository interface {
 	Get(ctx context.Context, filters map[string]any, execution *model.Execution) error
 	List(ctx context.Context, limit, offset uint64, filters map[string]any) ([]*model.Execution, int, error)
 	Update(ctx context.Context, id string, currentVersion int, data map[string]any) error
-	// AcquireForWorker claims up to `limit` PENDING executions atomically using
-	// SELECT ... FOR UPDATE SKIP LOCKED. Must be called inside a transaction.
-	AcquireForWorker(ctx context.Context, tenantID string, limit int) ([]*model.Execution, error)
+	AcquireForWorker(ctx context.Context, limit int) ([]*model.Execution, error)
 }
 
 type executionRepository struct {
@@ -170,10 +167,9 @@ func (r *executionRepository) Update(ctx context.Context, id string, currentVers
 	return nil
 }
 
-func (r *executionRepository) AcquireForWorker(ctx context.Context, tenantID string, limit int) ([]*model.Execution, error) {
+func (r *executionRepository) AcquireForWorker(ctx context.Context, limit int) ([]*model.Execution, error) {
 	query, args, err := r.sq.Select((&model.Execution{}).Columns()...).
 		From((&model.Execution{}).Tablename()).
-		Where(squirrel.Eq{"tenant_id": tenantID}).
 		Where(squirrel.Eq{"status": "PENDING"}).
 		OrderBy("created_at ASC").
 		Limit(uint64(limit)).

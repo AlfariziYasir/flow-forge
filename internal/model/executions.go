@@ -5,11 +5,12 @@ import "time"
 type StatusExecutions string
 
 const (
-	StatusExecutionPending = "PENDING"
-	StatusExecutionSuccess = "SUCCESS"
-	StatusExecutionFailed  = "FAILED"
-	StatusExecutionTimeout = "TIMEOUT"
-	StatusExecutionRunning = "RUNNING"
+	StatusExecutionPending   = "PENDING"
+	StatusExecutionSuccess   = "SUCCESS"
+	StatusExecutionFailed    = "FAILED"
+	StatusExecutionTimeout   = "TIMEOUT"
+	StatusExecutionRunning   = "RUNNING"
+	StatusExecutionCancelled = "CANCELLED"
 )
 
 type Execution struct {
@@ -61,4 +62,13 @@ type ExecutionResponse struct {
 	StartedAt   *time.Time `json:"started_at,omitempty"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
+}
+
+type ListExecutionRequest struct {
+	PageSize    uint64 `json:"page_size"`
+	PageToken   string `json:"page_token"`
+	TenantID    string `json:"-"`
+	WorkflowID  string `json:"workflow_id"`
+	Status      string `json:"status"`
+	TriggerType string `json:"trigger_type"`
 }
