@@ -12,11 +12,21 @@ import (
 	"github.com/go-chi/cors"
 )
 
-func NewRouter(authHandler *AuthHandler, wfHandler *WorkflowHandler, tm jwt.TokenManager) *chi.Mux {
+func NewRouter(
+	authHandler *AuthHandler,
+	wfHandler *WorkflowHandler,
+	execHandler *ExecutionHandler,
+	userHandler *UserHandler,
+	tenantHandler *TenantHandler,
+	aiHandler *AIHandler,
+	tm jwt.TokenManager,
+) *chi.Mux {
 	r := chi.NewRouter()
 
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	r.Use(RateLimiter(50)) // 50 req/sec global
+	r.Use(InputSanitizer())
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: []string{"*"}, // For MVP
 		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
@@ -34,7 +44,44 @@ func NewRouter(authHandler *AuthHandler, wfHandler *WorkflowHandler, tm jwt.Toke
 			r.Post("/", wfHandler.Create)
 			r.Get("/", wfHandler.List)
 			r.Get("/{id}", wfHandler.Get)
+			r.Put("/{id}", wfHandler.Update)
+			r.Delete("/{name}", wfHandler.Delete)
 			r.Post("/{id}/trigger", wfHandler.Trigger)
+			r.Post("/{id}/rollback", wfHandler.Rollback)
+			r.Get("/{name}/versions", wfHandler.ListVersions)
+		})
+
+		r.Route("/executions", func(r chi.Router) {
+			r.Get("/", execHandler.List)
+			r.Get("/{id}", execHandler.Get)
+			r.Post("/{id}/retry", execHandler.Retry)
+			r.Post("/{id}/cancel", execHandler.Cancel)
+		})
+
+		r.Route("/ai", func(r chi.Router) {
+			r.Post("/generate", aiHandler.GenerateDAG)
+			r.Post("/analyze", aiHandler.AnalyzeFailure)
+		})
+
+		// Admin only routes
+		r.Group(func(r chi.Router) {
+			r.Use(RBACMiddleware("admin"))
+			
+			r.Route("/tenants", func(r chi.Router) {
+				r.Post("/", tenantHandler.Create)
+				r.Get("/", tenantHandler.List)
+				r.Get("/{id}", tenantHandler.Get)
+				r.Put("/{id}", tenantHandler.Update)
+				r.Delete("/{id}", tenantHandler.Delete)
+			})
+
+			r.Route("/users", func(r chi.Router) {
+				r.Post("/", userHandler.Create)
+				r.Get("/", userHandler.List)
+				r.Get("/{id}", userHandler.Get)
+				r.Put("/{id}", userHandler.Update)
+				r.Delete("/{id}", userHandler.Delete)
+			})
 		})
 	})
 

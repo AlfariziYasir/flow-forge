@@ -11,6 +11,7 @@ const (
 	StatusExecutionTimeout   = "TIMEOUT"
 	StatusExecutionRunning   = "RUNNING"
 	StatusExecutionCancelled = "CANCELLED"
+	StatusExecutionSkipped   = "SKIPPED"
 )
 
 type Execution struct {
