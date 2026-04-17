@@ -22,6 +22,10 @@ func (w *Workflow) NextVersion() int {
 	return w.Version + 1
 }
 
+func (w *Workflow) GetSteps(dest *[]StepDefinition) error {
+	return json.Unmarshal(w.DAGDefinition, dest)
+}
+
 func (w *Workflow) Tablename() string {
 	return "workflows"
 }

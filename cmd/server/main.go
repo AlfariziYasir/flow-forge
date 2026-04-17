@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"time"
 
+	"flowforge/config"
+	"flowforge/internal/broadcaster"
 	"flowforge/internal/handler"
 	"flowforge/internal/repository"
 	"flowforge/internal/services"
@@ -17,6 +19,7 @@ import (
 	"flowforge/pkg/jwt"
 	appLogger "flowforge/pkg/logger"
 	"flowforge/pkg/postgres"
+	"flowforge/pkg/redis"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
@@ -26,6 +29,14 @@ func main() {
 	l, err := appLogger.New("info", "flow-forge", "1.0")
 	if err != nil {
 		log.Fatalf("failed to init logger: %v", err)
+	}
+
+	cfg, err := config.NewConfig()
+	if err != nil {
+		l.Warn("failed to load config from env, using defaults", zap.Error(err))
+		cfg = &config.Config{
+			RedisAddress: "localhost:6379",
+		}
 	}
 
 	dsn := os.Getenv("DATABASE_URL")
@@ -43,14 +54,28 @@ func main() {
 	uow := postgres.NewTransaction(pool)
 	tm := jwt.NewTokenManager("flowforge-super-secret-key-1234")
 
+	// Redis (Cache)
+	cache, err := redis.NewRedisCache(cfg.RedisAddress, cfg.RedisPassword, cfg.RedisDB)
+	if err != nil {
+		l.Warn("failed to connect to redis, caching will be disabled", zap.Error(err))
+	}
+
+	// Repositories
 	userRepo := repository.NewRepository(pool)
+	tenantRepo := repository.NewTenantRepository(pool)
 	wfRepo := repository.NewWorkflowRepository(pool)
 	execRepo := repository.NewExecutionRepository(pool)
 	sExecRepo := repository.NewStepExecutionRepository(pool)
 
+	// Services
 	wfService := services.NewWorkflowService(wfRepo, execRepo, sExecRepo, uow, l)
+	execService := services.NewExecutionService(execRepo, sExecRepo, wfRepo, l, uow)
+	userService := services.NewUserService(userRepo, tenantRepo, l, cfg, cache)
+	tenantService := services.NewTenantService(tenantRepo, l)
+	aiService := services.NewAIService()
 	
-	execEngine := workerService.NewExecutionEngine(execRepo, sExecRepo, uow, l)
+	// Execution Engine & Worker
+	execEngine := workerService.NewExecutionEngine(execRepo, sExecRepo, uow, l, broadcaster.Get())
 	jobPoller := workerHandler.NewJobPoller(execRepo, wfRepo, uow, execEngine, l, 5*time.Second)
 
 	// Start Background Worker Poller
@@ -58,10 +83,23 @@ func main() {
 	defer cancel()
 	go jobPoller.Start(workerCtx)
 
+	// Handlers
 	authHandler := handler.NewAuthHandler(userRepo, tm, l)
 	workflowHandler := handler.NewWorkflowHandler(wfService, l)
+	executionHandler := handler.NewExecutionHandler(execService, l)
+	userHandler := handler.NewUserHandler(userService, l)
+	tenantHandler := handler.NewTenantHandler(tenantService, l)
+	aiHandler := handler.NewAIHandler(aiService, l)
 
-	router := handler.NewRouter(authHandler, workflowHandler, tm)
+	router := handler.NewRouter(
+		authHandler,
+		workflowHandler,
+		executionHandler,
+		userHandler,
+		tenantHandler,
+		aiHandler,
+		tm,
+	)
 
 	srv := &http.Server{
 		Addr:    ":8080",

@@ -42,7 +42,7 @@ func (b *SSEBroadcaster) Unregister(clientChan chan []byte) {
 	close(clientChan)
 }
 
-func (b *SSEBroadcaster) Broadcast(event Event) {
+func (b *SSEBroadcaster) Broadcast(event any) {
 	b.mutex.RLock()
 	defer b.mutex.RUnlock()
 

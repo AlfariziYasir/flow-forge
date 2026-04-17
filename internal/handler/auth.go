@@ -10,6 +10,8 @@ import (
 	"flowforge/internal/repository"
 	"flowforge/pkg/jwt"
 	"flowforge/pkg/logger"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 type AuthHandler struct {
@@ -49,8 +51,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For MVP, compare directly without hashing or mock it
-	if user.PasswordHash != req.Password {
+	err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password))
+	if err != nil {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
