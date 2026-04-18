@@ -241,3 +241,26 @@ func (m *MockCache) Client() redis.UniversalClient {
 	}
 	return args.Get(0).(redis.UniversalClient)
 }
+
+func (m *MockCache) Publish(ctx context.Context, channel string, message any) error {
+	args := m.Called(ctx, channel, message)
+	return args.Error(0)
+}
+
+func (m *MockCache) Subscribe(ctx context.Context, channel string) *redis.PubSub {
+	args := m.Called(ctx, channel)
+	if args.Get(0) == nil {
+		return nil
+	}
+	return args.Get(0).(*redis.PubSub)
+}
+
+func (m *MockCache) RPush(ctx context.Context, key string, values ...any) error {
+	args := m.Called(ctx, key, values)
+	return args.Error(0)
+}
+
+func (m *MockCache) BLPop(ctx context.Context, timeout time.Duration, keys ...string) ([]string, error) {
+	args := m.Called(ctx, timeout, keys)
+	return args.Get(0).([]string), args.Error(1)
+}

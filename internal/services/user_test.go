@@ -43,10 +43,10 @@ func TestUserService_Login_Success(t *testing.T) {
 
 	uRepo.On("Get", ctx, map[string]any{"email": user.Email}, true, mock.AnythingOfType("*model.User")).
 		Return(user, nil)
-	
+
 	cache.On("Set", ctx, mock.Anything, mock.Anything, cfg.RefreshTokenExp).Return(nil)
 
-	acc, ref, err := svc.Login(ctx, model.UserRequest{Email: user.Email, Password: password})
+	acc, ref, err := svc.Login(ctx, model.UserLoginRequest{Email: user.Email, Password: password})
 
 	assert.NoError(t, err)
 	assert.NotEmpty(t, acc)
@@ -175,7 +175,7 @@ func TestUserService_Update(t *testing.T) {
 
 	ctx := context.Background()
 	u := &model.User{ID: "u1", Email: "old@e.com", Version: 1}
-	
+
 	uRepo.On("Get", ctx, map[string]any{"id": "u1"}, true, mock.Anything).Return(u, nil)
 	uRepo.On("Get", ctx, map[string]any{"email": "new@e.com"}, true, mock.Anything).Return(nil, errors.New("not found"))
 	uRepo.On("Update", ctx, "u1", 1, mock.Anything).Return(nil)

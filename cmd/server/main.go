@@ -14,8 +14,6 @@ import (
 	"flowforge/internal/handler"
 	"flowforge/internal/repository"
 	"flowforge/internal/services"
-	workerHandler "flowforge/internal/worker/handler"
-	workerService "flowforge/internal/worker/service"
 	"flowforge/pkg/jwt"
 	appLogger "flowforge/pkg/logger"
 	"flowforge/pkg/postgres"
@@ -54,11 +52,14 @@ func main() {
 	uow := postgres.NewTransaction(pool)
 	tm := jwt.NewTokenManager("flowforge-super-secret-key-1234")
 
-	// Redis (Cache)
+	// Redis (Cache & Queue)
 	cache, err := redis.NewRedisCache(cfg.RedisAddress, cfg.RedisPassword, cfg.RedisDB)
 	if err != nil {
-		l.Warn("failed to connect to redis, caching will be disabled", zap.Error(err))
+		l.Warn("failed to connect to redis, some features will be disabled", zap.Error(err))
 	}
+
+	// Broadcaster (init with redis)
+	broadcaster.Init(cache, l.GetZapLogger())
 
 	// Repositories
 	userRepo := repository.NewRepository(pool)
@@ -68,23 +69,14 @@ func main() {
 	sExecRepo := repository.NewStepExecutionRepository(pool)
 
 	// Services
-	wfService := services.NewWorkflowService(wfRepo, execRepo, sExecRepo, uow, l)
-	execService := services.NewExecutionService(execRepo, sExecRepo, wfRepo, l, uow)
+	wfService := services.NewWorkflowService(wfRepo, execRepo, sExecRepo, uow, cache, l)
+	execService := services.NewExecutionService(execRepo, sExecRepo, wfRepo, l, uow, cache)
 	userService := services.NewUserService(userRepo, tenantRepo, l, cfg, cache)
 	tenantService := services.NewTenantService(tenantRepo, l)
 	aiService := services.NewAIService()
 	
-	// Execution Engine & Worker
-	execEngine := workerService.NewExecutionEngine(execRepo, sExecRepo, uow, l, broadcaster.Get())
-	jobPoller := workerHandler.NewJobPoller(execRepo, wfRepo, uow, execEngine, l, 5*time.Second)
-
-	// Start Background Worker Poller
-	workerCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	go jobPoller.Start(workerCtx)
-
 	// Handlers
-	authHandler := handler.NewAuthHandler(userRepo, tm, l)
+	authHandler := handler.NewAuthHandler(userService, l)
 	workflowHandler := handler.NewWorkflowHandler(wfService, l)
 	executionHandler := handler.NewExecutionHandler(execService, l)
 	userHandler := handler.NewUserHandler(userService, l)

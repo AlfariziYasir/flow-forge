@@ -19,7 +19,7 @@ type mockUserService struct {
 	mock.Mock
 }
 
-func (m *mockUserService) Login(ctx context.Context, req model.UserRequest) (string, string, error) {
+func (m *mockUserService) Login(ctx context.Context, req model.UserLoginRequest) (string, string, error) {
 	args := m.Called(ctx, req)
 	return args.String(0), args.String(1), args.Error(2)
 }

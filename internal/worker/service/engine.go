@@ -16,7 +16,7 @@ import (
 )
 
 type Broadcaster interface {
-	Broadcast(event any)
+	BroadcastToRedis(ctx context.Context, tenantID string, event any) error
 }
 
 type ExecutionEngine interface {
@@ -150,7 +150,7 @@ func (e *engine) executeStepWithRetry(
 		}
 
 		// Broadcast step running
-		e.broadcast.Broadcast(map[string]any{
+		e.broadcast.BroadcastToRedis(ctx, execution.TenantID, map[string]any{
 			"execution_id": execution.ID,
 			"step_id":      def.ID,
 			"status":       "RUNNING",
@@ -158,7 +158,6 @@ func (e *engine) executeStepWithRetry(
 
 		// Prepare params with interpolation
 		params := state.Resolve(def.Parameters)
-
 		action, err := e.registry.Get(def.Action)
 		if err != nil {
 			return err
@@ -172,9 +171,9 @@ func (e *engine) executeStepWithRetry(
 				time.Sleep(backoff)
 				continue
 			}
-			
+
 			// Broadcast step failure
-			e.broadcast.Broadcast(map[string]any{
+			e.broadcast.BroadcastToRedis(ctx, execution.TenantID, map[string]any{
 				"execution_id": execution.ID,
 				"step_id":      def.ID,
 				"status":       "FAILED",
@@ -200,15 +199,15 @@ func (e *engine) executeStepWithRetry(
 			"completed_at": time.Now(),
 			"output":       result,
 		})
-		
+
 		// Broadcast step success
-		e.broadcast.Broadcast(map[string]any{
+		e.broadcast.BroadcastToRedis(ctx, execution.TenantID, map[string]any{
 			"execution_id": execution.ID,
 			"step_id":      def.ID,
 			"status":       "SUCCESS",
 			"output":       result,
 		})
-		
+
 		return err
 	}
 
