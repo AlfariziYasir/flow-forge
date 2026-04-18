@@ -21,7 +21,7 @@ func TestExecutionService_Get(t *testing.T) {
 	trx := new(MockTrx)
 	log := logger.NewNop()
 
-	svc := NewExecutionService(eRepo, sRepo, wRepo, log, trx)
+	svc := NewExecutionService(eRepo, sRepo, wRepo, log, trx, nil)
 
 	ctx := context.Background()
 	id := uuid.New().String()
@@ -53,7 +53,7 @@ func TestExecutionService_List(t *testing.T) {
 	trx := new(MockTrx)
 	log := logger.NewNop()
 
-	svc := NewExecutionService(eRepo, sRepo, wRepo, log, trx)
+	svc := NewExecutionService(eRepo, sRepo, wRepo, log, trx, nil)
 
 	ctx := context.Background()
 	tenantID := uuid.New().String()
@@ -85,7 +85,7 @@ func TestExecutionService_Retry_NotFound(t *testing.T) {
 	trx := new(MockTrx)
 	log := logger.NewNop()
 
-	svc := NewExecutionService(eRepo, sRepo, wRepo, log, trx)
+	svc := NewExecutionService(eRepo, sRepo, wRepo, log, trx, nil)
 
 	ctx := context.Background()
 	id := uuid.New().String()
@@ -104,7 +104,7 @@ func TestExecutionService_Retry_Success(t *testing.T) {
 	sRepo := new(MockStepExecutionRepository)
 	wRepo := new(MockWorkflowRepository)
 	trx := new(MockTrx)
-	svc := NewExecutionService(eRepo, sRepo, wRepo, logger.NewNop(), trx)
+	svc := NewExecutionService(eRepo, sRepo, wRepo, logger.NewNop(), trx, nil)
 
 	ctx := context.Background()
 	tenantID := "T1"
@@ -139,7 +139,7 @@ func TestExecutionService_Retry_Success(t *testing.T) {
 
 func TestExecutionService_Cancel_Success(t *testing.T) {
 	eRepo := new(MockExecutionRepository)
-	svc := NewExecutionService(eRepo, nil, nil, logger.NewNop(), nil)
+	svc := NewExecutionService(eRepo, nil, nil, logger.NewNop(), nil, nil)
 
 	ctx := context.Background()
 	tenantID := "T1"

@@ -29,8 +29,9 @@ type MockBroadcaster struct {
 	mock.Mock
 }
 
-func (m *MockBroadcaster) Broadcast(event any) {
-	m.Called(event)
+func (m *MockBroadcaster) BroadcastToRedis(ctx context.Context, tenantID string, event any) error {
+	args := m.Called(ctx, tenantID, event)
+	return args.Error(0)
 }
 
 // These mocks are duplicates of what's in internal/services/service_mocks_test.go
@@ -142,7 +143,7 @@ func TestEngine_SimpleWorkflow_Success(t *testing.T) {
 	})).Return(nil)
 
 	// Expect two broadcasts: one for step running, one for step success
-	broadcaster.On("Broadcast", mock.Anything).Return().Times(2)
+	broadcaster.On("BroadcastToRedis", mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(2)
 
 	engine.RunExecution(context.Background(), execution, workflow)
 
@@ -189,7 +190,7 @@ func TestEngine_RetryWithBackoff(t *testing.T) {
 	// 1. Step Running (Attempt 1)
 	// 2. Step Running (Attempt 2)
 	// 3. Step Success
-	broadcaster.On("Broadcast", mock.Anything).Return().Times(3)
+	broadcaster.On("BroadcastToRedis", mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 
 	start := time.Now()
 	engine.RunExecution(context.Background(), execution, workflow)
@@ -235,7 +236,7 @@ func TestEngine_MaxRetries_Exhausted(t *testing.T) {
 	// 1. Step Running (A1)
 	// 2. Step Running (A2)
 	// 3. Step Failed
-	broadcaster.On("Broadcast", mock.Anything).Return().Times(3)
+	broadcaster.On("BroadcastToRedis", mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 
 	engine.RunExecution(context.Background(), execution, workflow)
 
@@ -284,7 +285,7 @@ func TestEngine_ConditionalSkip(t *testing.T) {
 	sRepo.On("Update", mock.Anything, "se-1", mock.Anything).Return(nil)
 
 	// Broadcaster: 1x Running, 1x Success (for step 1)
-	broadcaster.On("Broadcast", mock.Anything).Return().Times(2)
+	broadcaster.On("BroadcastToRedis", mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(2)
 
 	engine.RunExecution(context.Background(), execution, workflow)
 
@@ -328,7 +329,7 @@ func TestEngine_ParallelExecution(t *testing.T) {
 	sRepo.On("Update", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	// Broadcaster: (1x Running + 1x Success) * 2 steps = 4 calls
-	broadcaster.On("Broadcast", mock.Anything).Return().Times(4)
+	broadcaster.On("BroadcastToRedis", mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(4)
 
 	start := time.Now()
 	engine.RunExecution(context.Background(), execution, workflow)

@@ -20,6 +20,10 @@ type Cache interface {
 	Delete(ctx context.Context, keys ...string) error
 	DeleteByPattern(ctx context.Context, pattern string) error
 	Client() redis.UniversalClient
+	Publish(ctx context.Context, channel string, message any) error
+	Subscribe(ctx context.Context, channel string) *redis.PubSub
+	RPush(ctx context.Context, key string, values ...any) error
+	BLPop(ctx context.Context, timeout time.Duration, keys ...string) ([]string, error)
 }
 
 type redisCache struct {
@@ -108,4 +112,35 @@ func (c *redisCache) DeleteByPattern(ctx context.Context, pattern string) error 
 
 func (c *redisCache) Client() redis.UniversalClient {
 	return c.client
+}
+
+func (c *redisCache) Publish(ctx context.Context, channel string, message any) error {
+	var payload []byte
+	var err error
+
+	switch v := message.(type) {
+	case string:
+		payload = []byte(v)
+	case []byte:
+		payload = v
+	default:
+		payload, err = json.Marshal(v)
+		if err != nil {
+			return err
+		}
+	}
+
+	return c.client.Publish(ctx, channel, payload).Err()
+}
+
+func (c *redisCache) Subscribe(ctx context.Context, channel string) *redis.PubSub {
+	return c.client.Subscribe(ctx, channel)
+}
+
+func (c *redisCache) RPush(ctx context.Context, key string, values ...any) error {
+	return c.client.RPush(ctx, key, values...).Err()
+}
+
+func (c *redisCache) BLPop(ctx context.Context, timeout time.Duration, keys ...string) ([]string, error) {
+	return c.client.BLPop(ctx, timeout, keys...).Result()
 }

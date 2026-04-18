@@ -20,7 +20,7 @@ func TestWorkflowService_Create(t *testing.T) {
 	trx := new(MockTrx)
 	log := logger.NewNop()
 
-	svc := NewWorkflowService(wRepo, eRepo, sRepo, trx, log)
+	svc := NewWorkflowService(wRepo, eRepo, sRepo, trx, nil, log)
 
 	ctx := context.Background()
 	tenantID := uuid.New().String()
@@ -47,7 +47,7 @@ func TestWorkflowService_Create_InvalidDAG(t *testing.T) {
 	trx := new(MockTrx)
 	log := logger.NewNop()
 
-	svc := NewWorkflowService(wRepo, eRepo, sRepo, trx, log)
+	svc := NewWorkflowService(wRepo, eRepo, sRepo, trx, nil, log)
 
 	ctx := context.Background()
 	tenantID := uuid.New().String()
@@ -69,7 +69,7 @@ func TestWorkflowService_Get(t *testing.T) {
 	trx := new(MockTrx)
 	log := logger.NewNop()
 
-	svc := NewWorkflowService(wRepo, eRepo, sRepo, trx, log)
+	svc := NewWorkflowService(wRepo, eRepo, sRepo, trx, nil, log)
 
 	ctx := context.Background()
 	id := uuid.New().String()
@@ -100,7 +100,7 @@ func TestWorkflowService_Get_NotFound(t *testing.T) {
 	trx := new(MockTrx)
 	log := logger.NewNop()
 
-	svc := NewWorkflowService(wRepo, eRepo, sRepo, trx, log)
+	svc := NewWorkflowService(wRepo, eRepo, sRepo, trx, nil, log)
 
 	ctx := context.Background()
 	id := uuid.New().String()
@@ -117,7 +117,7 @@ func TestWorkflowService_Get_NotFound(t *testing.T) {
 
 func TestWorkflowService_List(t *testing.T) {
 	wRepo := new(MockWorkflowRepository)
-	svc := NewWorkflowService(wRepo, nil, nil, nil, logger.NewNop())
+	svc := NewWorkflowService(wRepo, nil, nil, nil, nil, logger.NewNop())
 
 	ctx := context.Background()
 	tenantID := uuid.New().String()
@@ -143,7 +143,7 @@ func TestWorkflowService_List(t *testing.T) {
 
 func TestWorkflowService_ListVersions(t *testing.T) {
 	wRepo := new(MockWorkflowRepository)
-	svc := NewWorkflowService(wRepo, nil, nil, nil, logger.NewNop())
+	svc := NewWorkflowService(wRepo, nil, nil, nil, nil, logger.NewNop())
 
 	ctx := context.Background()
 	tenantID := uuid.New().String()
@@ -167,7 +167,7 @@ func TestWorkflowService_Update(t *testing.T) {
 	eRepo := new(MockExecutionRepository)
 	sRepo := new(MockStepExecutionRepository)
 	trx := new(MockTrx)
-	svc := NewWorkflowService(wRepo, eRepo, sRepo, trx, logger.NewNop())
+	svc := NewWorkflowService(wRepo, eRepo, sRepo, trx, nil, logger.NewNop())
 
 	ctx := context.Background()
 	req := &model.WorkflowRequest{
@@ -207,7 +207,7 @@ func TestWorkflowService_Rollback(t *testing.T) {
 	eRepo := new(MockExecutionRepository)
 	sRepo := new(MockStepExecutionRepository)
 	trx := new(MockTrx)
-	svc := NewWorkflowService(wRepo, eRepo, sRepo, trx, logger.NewNop())
+	svc := NewWorkflowService(wRepo, eRepo, sRepo, trx, nil, logger.NewNop())
 
 	ctx := context.Background()
 	req := &model.WorkflowRollbackRequest{
@@ -245,7 +245,7 @@ func TestWorkflowService_Rollback(t *testing.T) {
 
 func TestWorkflowService_Delete(t *testing.T) {
 	wRepo := new(MockWorkflowRepository)
-	svc := NewWorkflowService(wRepo, nil, nil, nil, logger.NewNop())
+	svc := NewWorkflowService(wRepo, nil, nil, nil, nil, logger.NewNop())
 
 	ctx := context.Background()
 	wRepo.On("Delete", ctx, "T1", "W1").Return(nil)
@@ -260,7 +260,7 @@ func TestWorkflowService_Trigger(t *testing.T) {
 	eRepo := new(MockExecutionRepository)
 	sRepo := new(MockStepExecutionRepository)
 	trx := new(MockTrx)
-	svc := NewWorkflowService(wRepo, eRepo, sRepo, trx, logger.NewNop())
+	svc := NewWorkflowService(wRepo, eRepo, sRepo, trx, nil, logger.NewNop())
 
 	ctx := context.Background()
 	wf := &model.Workflow{

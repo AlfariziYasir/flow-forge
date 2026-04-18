@@ -14,6 +14,7 @@ import (
 	"flowforge/pkg/errorx"
 	"flowforge/pkg/logger"
 	"flowforge/pkg/postgres"
+	"flowforge/pkg/redis"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -35,6 +36,7 @@ type workflowService struct {
 	eRepo repository.ExecutionRepository
 	sRepo repository.StepExecutionRepository
 	trx   postgres.Trx
+	cache redis.Cache
 	log   *logger.Logger
 }
 
@@ -43,6 +45,7 @@ func NewWorkflowService(
 	eRepo repository.ExecutionRepository,
 	sRepo repository.StepExecutionRepository,
 	trx postgres.Trx,
+	cache redis.Cache,
 	l *logger.Logger,
 ) WorkflowService {
 	return &workflowService{
@@ -50,6 +53,7 @@ func NewWorkflowService(
 		eRepo: eRepo,
 		sRepo: sRepo,
 		trx:   trx,
+		cache: cache,
 		log:   l,
 	}
 }
@@ -372,6 +376,10 @@ func (s *workflowService) Trigger(ctx context.Context, tenantID, workflowID stri
 
 	if err := s.trx.Commit(txCtx); err != nil {
 		return nil, err
+	}
+
+	if s.cache != nil {
+		_ = s.cache.RPush(ctx, "flowforge:jobs:queue", execution.ID)
 	}
 
 	return execution, nil

@@ -13,6 +13,7 @@ import (
 	"flowforge/pkg/errorx"
 	"flowforge/pkg/logger"
 	"flowforge/pkg/postgres"
+	"flowforge/pkg/redis"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -30,16 +31,18 @@ type executionService struct {
 	wRepo repository.WorkflowRepository
 	sRepo repository.StepExecutionRepository
 	trx   postgres.Trx
+	cache redis.Cache
 	log   *logger.Logger
 }
 
-func NewExecutionService(eRepo repository.ExecutionRepository, sRepo repository.StepExecutionRepository, wRepo repository.WorkflowRepository, log *logger.Logger, trx postgres.Trx) ExecutionService {
+func NewExecutionService(eRepo repository.ExecutionRepository, sRepo repository.StepExecutionRepository, wRepo repository.WorkflowRepository, log *logger.Logger, trx postgres.Trx, cache redis.Cache) ExecutionService {
 	return &executionService{
 		eRepo: eRepo,
 		wRepo: wRepo,
 		sRepo: sRepo,
 		log:   log,
 		trx:   trx,
+		cache: cache,
 	}
 }
 
@@ -193,6 +196,10 @@ func (s *executionService) Retry(ctx context.Context, tenantID, executionID stri
 
 	if err := s.trx.Commit(txCtx); err != nil {
 		return err
+	}
+
+	if s.cache != nil {
+		_ = s.cache.RPush(ctx, "flowforge:jobs:queue", execution.ID)
 	}
 
 	return nil

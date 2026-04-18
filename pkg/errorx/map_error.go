@@ -1,6 +1,7 @@
 package errorx
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 )
@@ -13,6 +14,17 @@ type HTTPError struct {
 
 func (e *HTTPError) Error() string {
 	return e.Message
+}
+
+func (h *HTTPError) Write(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(h.Code)
+	json.NewEncoder(w).Encode(h)
+}
+
+func HttpNewError(w http.ResponseWriter, code int, message string) {
+	h := &HTTPError{Code: code, Message: message}
+	h.Write(w)
 }
 
 func MapError(err error) *HTTPError {

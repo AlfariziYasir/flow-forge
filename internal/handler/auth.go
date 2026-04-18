@@ -1,70 +1,43 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
-	"time"
 
 	"flowforge/internal/model"
-	"flowforge/internal/repository"
-	"flowforge/pkg/jwt"
+	"flowforge/internal/services"
+	"flowforge/pkg/errorx"
 	"flowforge/pkg/logger"
-
-	"golang.org/x/crypto/bcrypt"
+	"flowforge/pkg/response"
 )
 
 type AuthHandler struct {
-	userRepo repository.UserRepository
-	tm       jwt.TokenManager
-	l        *logger.Logger
+	svc services.UserService
+	l   *logger.Logger
 }
 
-func NewAuthHandler(userRepo repository.UserRepository, tm jwt.TokenManager, l *logger.Logger) *AuthHandler {
+func NewAuthHandler(svc services.UserService, l *logger.Logger) *AuthHandler {
 	return &AuthHandler{
-		userRepo: userRepo,
-		tm:       tm,
-		l:        l,
+		svc: svc,
+		l:   l,
 	}
-}
-
-type LoginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"` // In MVP, we might just compare clear text or mock
-}
-
-type LoginResponse struct {
-	Token string `json:"token"`
 }
 
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
-	var req LoginRequest
+	var req model.UserLoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		errorx.HttpNewError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	var user model.User
-	err := h.userRepo.Get(context.Background(), map[string]any{"email": req.Email}, true, &user)
+	accToken, refToken, err := h.svc.Login(r.Context(), req)
 	if err != nil {
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		errorx.MapError(err).Write(w)
 		return
 	}
 
-	err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password))
-	if err != nil {
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
-		return
-	}
-
-	// Generate token (valid for 24h)
-	token, err := h.tm.Generate(user.ID, user.TenantID, user.Role, 24*time.Hour)
-	if err != nil {
-		h.l.Error("failed to generate token")
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(LoginResponse{Token: token})
+	response.Success(w, http.StatusOK, "login success", model.UserLoginResponse{
+		AccessToken:  accToken,
+		RefreshToken: refToken,
+	})
 }

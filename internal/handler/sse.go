@@ -21,16 +21,23 @@ func SSEHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Extract tenantID from context (added by authMiddleware)
+	tenantID, ok := r.Context().Value("tenant_id").(string)
+	if !ok {
+		http.Error(w, "Unauthorized: tenant_id missing", http.StatusUnauthorized)
+		return
+	}
+
 	// Create a channel for this client
 	clientChan := make(chan []byte)
 
 	// Register this client with the broadcaster
 	b := broadcaster.Get()
-	b.Register(clientChan)
+	b.Register(tenantID, clientChan)
 
 	// Ensure cleanup when the client disconnects
 	defer func() {
-		b.Unregister(clientChan)
+		b.Unregister(tenantID, clientChan)
 	}()
 
 	// Send an initial connected message

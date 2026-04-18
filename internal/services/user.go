@@ -24,7 +24,7 @@ import (
 )
 
 type UserService interface {
-	Login(ctx context.Context, req model.UserRequest) (string, string, error)
+	Login(ctx context.Context, req model.UserLoginRequest) (string, string, error)
 	Logout(ctx context.Context, accUuid, refUuid string) error
 	Refresh(ctx context.Context, refUuid, userId, role, tenantID string) (string, error)
 	Create(ctx context.Context, req model.UserRequest) (*model.UserResponse, error)
@@ -58,7 +58,7 @@ func NewUserService(
 	}
 }
 
-func (s *userService) Login(ctx context.Context, req model.UserRequest) (string, string, error) {
+func (s *userService) Login(ctx context.Context, req model.UserLoginRequest) (string, string, error) {
 	var user model.User
 
 	err := s.uRepo.Get(ctx, map[string]any{"email": req.Email}, true, &user)
