@@ -4,6 +4,7 @@ import (
 	"context"
 	"flowforge/internal/handler"
 	"flowforge/internal/model"
+	"flowforge/pkg/jwt"
 	"flowforge/pkg/logger"
 	"net/http"
 	"net/http/httptest"
@@ -59,11 +60,11 @@ func TestWorkflowHandler_Delete(t *testing.T) {
 	svc.On("Delete", mock.Anything, "t-1", "wf-1").Return(nil)
 
 	req := httptest.NewRequest("DELETE", "/workflows/wf-1", nil)
-	ctx := context.WithValue(req.Context(), "tenant_id", "t-1")
+	ctx := jwt.SetContext(req.Context(), jwt.TenantKey, "t-1")
 	rr := httptest.NewRecorder()
 
 	r.ServeHTTP(rr, req.WithContext(ctx))
 
-	assert.Equal(t, http.StatusNoContent, rr.Code)
+	assert.Equal(t, http.StatusOK, rr.Code)
 	svc.AssertExpectations(t)
 }

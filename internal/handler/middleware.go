@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 
+	"flowforge/pkg/jwt"
+
 	"golang.org/x/time/rate"
 )
 
@@ -25,7 +27,7 @@ func RateLimiter(r rate.Limit) func(http.Handler) http.Handler {
 func RBACMiddleware(requiredRoles ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			role, _ := r.Context().Value("role").(string)
+			role := jwt.GetRole(r.Context())
 
 			allowed := false
 			for _, rr := range requiredRoles {

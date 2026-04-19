@@ -1,8 +1,9 @@
 package handler_test
 
 import (
-	"context"
+
 	"flowforge/internal/handler"
+	"flowforge/pkg/jwt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -58,7 +59,7 @@ func TestRBACMiddleware(t *testing.T) {
 	t.Run("Authorized Admin", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		ctx := req.Context()
-		ctx = context.WithValue(ctx, "role", "admin")
+		ctx = jwt.SetContext(ctx, jwt.RoleKey, "admin")
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, req.WithContext(ctx))
 		assert.Equal(t, http.StatusOK, rr.Code)
@@ -67,7 +68,7 @@ func TestRBACMiddleware(t *testing.T) {
 	t.Run("Unauthorized Viewer", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		ctx := req.Context()
-		ctx = context.WithValue(ctx, "role", "viewer")
+		ctx = jwt.SetContext(ctx, jwt.RoleKey, "viewer")
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, req.WithContext(ctx))
 		assert.Equal(t, http.StatusForbidden, rr.Code)

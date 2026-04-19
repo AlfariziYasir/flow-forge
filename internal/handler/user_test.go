@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"flowforge/internal/handler"
 	"flowforge/internal/model"
+
 	"flowforge/pkg/logger"
+	"flowforge/pkg/response"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -67,9 +69,9 @@ func TestUserHandler_Create(t *testing.T) {
 
 	assert.Equal(t, http.StatusCreated, rr.Code)
 
-	var resp model.UserResponse
+	var resp response.Response[model.UserResponse]
 	json.NewDecoder(rr.Body).Decode(&resp)
-	assert.Equal(t, "u-1", resp.UserID)
+	assert.Equal(t, "u-1", resp.Data.UserID)
 
 	svc.AssertExpectations(t)
 }

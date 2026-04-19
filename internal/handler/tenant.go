@@ -6,38 +6,42 @@ import (
 
 	"flowforge/internal/model"
 	"flowforge/internal/services"
+	"flowforge/pkg/errorx"
 	"flowforge/pkg/logger"
+	"flowforge/pkg/response"
 
 	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
 )
 
 type TenantHandler struct {
-	ts services.TenantService
-	l  *logger.Logger
+	ts  services.TenantService
+	log *logger.Logger
 }
 
 func NewTenantHandler(ts services.TenantService, l *logger.Logger) *TenantHandler {
 	return &TenantHandler{
-		ts: ts,
-		l:  l,
+		ts:  ts,
+		log: l,
 	}
 }
 
 func (h *TenantHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req model.TenantRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		h.log.Error("failed decode request body", zap.Error(err))
+		errorx.HttpNewError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	tenant, err := h.ts.Create(r.Context(), req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.log.Error("failed create tenant", zap.Error(err))
+		errorx.MapError(err).Write(w)
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(tenant)
+	response.SuccessWithData(w, http.StatusCreated, "success", tenant)
 }
 
 func (h *TenantHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -45,11 +49,12 @@ func (h *TenantHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	tenant, err := h.ts.Get(r.Context(), id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		h.log.Error("failed get tenant", zap.Error(err))
+		errorx.MapError(err).Write(w)
 		return
 	}
 
-	json.NewEncoder(w).Encode(tenant)
+	response.SuccessWithData(w, http.StatusOK, "success", tenant)
 }
 
 func (h *TenantHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -57,38 +62,45 @@ func (h *TenantHandler) List(w http.ResponseWriter, r *http.Request) {
 		PageSize: 50,
 	}
 
-	tenants, _, _, err := h.ts.List(r.Context(), req)
+	tenants, count, _, err := h.ts.List(r.Context(), req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.log.Error("failed list tenants", zap.Error(err))
+		errorx.MapError(err).Write(w)
 		return
 	}
 
-	json.NewEncoder(w).Encode(tenants)
+	response.SuccessWithData(w, http.StatusOK, "success", map[string]interface{}{
+		"data": tenants,
+		"total": count,
+	})
 }
 
 func (h *TenantHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var req model.TenantRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		h.log.Error("failed decode request body", zap.Error(err))
+		errorx.HttpNewError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	tenant, err := h.ts.Update(r.Context(), req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.log.Error("failed update tenant", zap.Error(err))
+		errorx.MapError(err).Write(w)
 		return
 	}
 
-	json.NewEncoder(w).Encode(tenant)
+	response.SuccessWithData(w, http.StatusOK, "success", tenant)
 }
 
 func (h *TenantHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	if err := h.ts.Delete(r.Context(), id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.log.Error("failed delete tenant", zap.Error(err))
+		errorx.MapError(err).Write(w)
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	response.SuccessMessage(w, http.StatusOK, "success")
 }

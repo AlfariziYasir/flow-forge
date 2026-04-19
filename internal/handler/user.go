@@ -6,38 +6,42 @@ import (
 
 	"flowforge/internal/model"
 	"flowforge/internal/services"
+	"flowforge/pkg/errorx"
 	"flowforge/pkg/logger"
+	"flowforge/pkg/response"
 
 	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
 )
 
 type UserHandler struct {
-	us services.UserService
-	l  *logger.Logger
+	us  services.UserService
+	log *logger.Logger
 }
 
 func NewUserHandler(us services.UserService, l *logger.Logger) *UserHandler {
 	return &UserHandler{
-		us: us,
-		l:  l,
+		us:  us,
+		log: l,
 	}
 }
 
 func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req model.UserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		h.log.Error("failed decode request body", zap.Error(err))
+		errorx.HttpNewError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	user, err := h.us.Create(r.Context(), req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.log.Error("failed create user", zap.Error(err))
+		errorx.MapError(err).Write(w)
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(user)
+	response.SuccessWithData(w, http.StatusCreated, "success", user)
 }
 
 func (h *UserHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -45,11 +49,12 @@ func (h *UserHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.us.Get(r.Context(), id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		h.log.Error("failed get user", zap.Error(err))
+		errorx.MapError(err).Write(w)
 		return
 	}
 
-	json.NewEncoder(w).Encode(user)
+	response.SuccessWithData(w, http.StatusOK, "success", user)
 }
 
 func (h *UserHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -57,38 +62,45 @@ func (h *UserHandler) List(w http.ResponseWriter, r *http.Request) {
 		PageSize: 50,
 	}
 
-	users, _, _, err := h.us.List(r.Context(), req)
+	users, count, _, err := h.us.List(r.Context(), req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.log.Error("failed list users", zap.Error(err))
+		errorx.MapError(err).Write(w)
 		return
 	}
 
-	json.NewEncoder(w).Encode(users)
+	response.SuccessWithData(w, http.StatusOK, "success", map[string]interface{}{
+		"data": users,
+		"total": count,
+	})
 }
 
 func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var req model.UserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		h.log.Error("failed decode request body", zap.Error(err))
+		errorx.HttpNewError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	user, err := h.us.Update(r.Context(), req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.log.Error("failed update user", zap.Error(err))
+		errorx.MapError(err).Write(w)
 		return
 	}
 
-	json.NewEncoder(w).Encode(user)
+	response.SuccessWithData(w, http.StatusOK, "success", user)
 }
 
 func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	if err := h.us.Delete(r.Context(), id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.log.Error("failed delete user", zap.Error(err))
+		errorx.MapError(err).Write(w)
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	response.SuccessMessage(w, http.StatusOK, "success")
 }

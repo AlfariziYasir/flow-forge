@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"context"
+
 	"net/http"
 	"strings"
 
@@ -109,9 +109,9 @@ func authMiddleware(tm jwt.TokenManager) func(http.Handler) http.Handler {
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), "user_id", claims.UserID)
-			ctx = context.WithValue(ctx, "tenant_id", claims.TenantID)
-			ctx = context.WithValue(ctx, "role", claims.Role)
+			ctx := jwt.SetContext(r.Context(), jwt.UserKey, claims.UserID)
+			ctx = jwt.SetContext(ctx, jwt.TenantKey, claims.TenantID)
+			ctx = jwt.SetContext(ctx, jwt.RoleKey, string(claims.Role))
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
