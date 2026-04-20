@@ -17,6 +17,8 @@ func (e *HTTPError) Error() string {
 }
 
 func (h *HTTPError) Write(w http.ResponseWriter) {
+	w.Header().Del("Content-Length")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(h.Code)
 	json.NewEncoder(w).Encode(h)

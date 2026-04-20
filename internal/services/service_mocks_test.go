@@ -264,3 +264,8 @@ func (m *MockCache) BLPop(ctx context.Context, timeout time.Duration, keys ...st
 	args := m.Called(ctx, timeout, keys)
 	return args.Get(0).([]string), args.Error(1)
 }
+
+func (m *MockCache) Allow(ctx context.Context, key string, limit int, rate int) (bool, error) {
+	args := m.Called(ctx, key, limit, rate)
+	return args.Bool(0), args.Error(1)
+}

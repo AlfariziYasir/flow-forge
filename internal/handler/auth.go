@@ -15,13 +15,13 @@ import (
 )
 
 type AuthHandler struct {
-	svc services.UserService
+	us  services.UserService
 	log *logger.Logger
 }
 
-func NewAuthHandler(svc services.UserService, l *logger.Logger) *AuthHandler {
+func NewAuthHandler(us services.UserService, l *logger.Logger) *AuthHandler {
 	return &AuthHandler{
-		svc: svc,
+		us:  us,
 		log: l,
 	}
 }
@@ -34,7 +34,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accToken, refToken, err := h.svc.Login(r.Context(), req)
+	accToken, refToken, err := h.us.Login(r.Context(), req)
 	if err != nil {
 		h.log.Error("failed login", zap.Error(err))
 		errorx.MapError(err).Write(w)
@@ -76,7 +76,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accToken, err := h.svc.Refresh(r.Context(), refUuid, userID, role, tenantID)
+	accToken, err := h.us.Refresh(r.Context(), refUuid, userID, role, tenantID)
 	if err != nil {
 		h.log.Error("failed refresh", zap.Error(err))
 		errorx.MapError(err).Write(w)
@@ -103,7 +103,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.svc.Logout(r.Context(), accUuid, refUuid)
+	err := h.us.Logout(r.Context(), accUuid, refUuid)
 	if err != nil {
 		h.log.Error("failed logout", zap.Error(err))
 		errorx.MapError(err).Write(w)

@@ -2,23 +2,62 @@ package handler
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"flowforge/pkg/jwt"
+	"flowforge/pkg/logger"
+	"flowforge/pkg/redis"
 
-	"golang.org/x/time/rate"
+	"go.uber.org/zap"
 )
 
-func RateLimiter(r rate.Limit) func(http.Handler) http.Handler {
-	limiter := rate.NewLimiter(r, int(r))
-
+func RateLimiter(log *logger.Logger, cache redis.Cache, tenantLimit, tenantRate int, globalLimit, globalRate int) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !limiter.Allow() {
-				http.Error(w, "Too many requests", http.StatusTooManyRequests)
+			ctx := r.Context()
+
+			// 1. Global Rate Limit
+			globalKey := "rate_limit:global"
+			allowed, err := cache.Allow(ctx, globalKey, globalLimit, globalRate)
+			if err != nil {
+				log.Error("global rate limiter error, failing open", zap.Error(err), zap.String("key", globalKey))
+			}
+			if !allowed && err == nil {
+				http.Error(w, "Global rate limit exceeded", http.StatusTooManyRequests)
 				return
 			}
+
+			// 2. Scoped Rate Limit (Tenant or IP)
+			var scopeKey string
+			tenantID := jwt.GetTenant(ctx)
+			if tenantID != "" {
+				scopeKey = fmt.Sprintf("rate_limit:tenant:%s", tenantID)
+			} else {
+				ip := r.Header.Get("X-Forwarded-For")
+				if ip == "" {
+					ip = r.RemoteAddr
+					if idx := strings.LastIndex(ip, ":"); idx != -1 {
+						ip = ip[:idx]
+					}
+				} else {
+					ips := strings.Split(ip, ",")
+					ip = strings.TrimSpace(ips[0])
+				}
+				scopeKey = fmt.Sprintf("rate_limit:ip:%s", ip)
+			}
+
+			allowed, err = cache.Allow(ctx, scopeKey, tenantLimit, tenantRate)
+			if err != nil {
+				log.Error("scoped rate limiter error, failing open", zap.Error(err), zap.String("key", scopeKey))
+			}
+			if !allowed && err == nil {
+				http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+				return
+			}
+
 			next.ServeHTTP(w, r)
 		})
 	}
@@ -57,7 +96,6 @@ func InputSanitizer() func(http.Handler) http.Handler {
 				}
 				r.Body.Close()
 
-				// Restore body for next handlers
 				r.Body = io.NopCloser(bytes.NewBuffer(body))
 
 				if bytes.Contains(bytes.ToLower(body), []byte("<script")) {
