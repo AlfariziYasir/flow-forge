@@ -7,6 +7,7 @@ import (
 	"flowforge/internal/handler"
 	"flowforge/internal/model"
 	"flowforge/pkg/logger"
+	"flowforge/pkg/response"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -56,9 +57,9 @@ func TestTenantHandler_Create(t *testing.T) {
 
 	assert.Equal(t, http.StatusCreated, rr.Code)
 	
-	var resp model.TenantResponse
+	var resp response.Response[model.TenantResponse]
 	json.NewDecoder(rr.Body).Decode(&resp)
-	assert.Equal(t, "t-1", resp.ID)
+	assert.Equal(t, "t-1", resp.Data.ID)
 	
 	svc.AssertExpectations(t)
 }

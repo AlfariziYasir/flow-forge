@@ -6,17 +6,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-const (
-	RefKey       string = "rt"
-	BlacklistKey string = "blacklist"
-)
-
-type (
-	RoleKey   struct{}
-	UserKey   struct{}
-	TenantKey struct{}
-)
-
 type ClaimOption func(jwt.MapClaims)
 
 func WithOption(k string, v any) ClaimOption {

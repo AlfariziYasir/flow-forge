@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"flowforge/internal/handler"
 	"flowforge/internal/model"
+	"flowforge/pkg/jwt"
 	"flowforge/pkg/logger"
+	"flowforge/pkg/response"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -48,16 +50,16 @@ func TestExecutionHandler_Get(t *testing.T) {
 	}, nil)
 
 	req := httptest.NewRequest("GET", "/executions/exec-1", nil)
-	ctx := context.WithValue(req.Context(), "tenant_id", "t-1")
+	ctx := jwt.SetContext(req.Context(), jwt.TenantKey, "t-1")
 	rr := httptest.NewRecorder()
 
 	r.ServeHTTP(rr, req.WithContext(ctx))
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	
-	var resp model.ExecutionResponse
+	var resp response.Response[model.ExecutionResponse]
 	json.NewDecoder(rr.Body).Decode(&resp)
-	assert.Equal(t, "exec-1", resp.ID)
+	assert.Equal(t, "exec-1", resp.Data.ID)
 	
 	svc.AssertExpectations(t)
 }

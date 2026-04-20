@@ -24,6 +24,7 @@ type Cache interface {
 	Subscribe(ctx context.Context, channel string) *redis.PubSub
 	RPush(ctx context.Context, key string, values ...any) error
 	BLPop(ctx context.Context, timeout time.Duration, keys ...string) ([]string, error)
+	Allow(ctx context.Context, key string, limit int, rate int) (bool, error)
 }
 
 type redisCache struct {
@@ -143,4 +144,48 @@ func (c *redisCache) RPush(ctx context.Context, key string, values ...any) error
 
 func (c *redisCache) BLPop(ctx context.Context, timeout time.Duration, keys ...string) ([]string, error) {
 	return c.client.BLPop(ctx, timeout, keys...).Result()
+}
+
+const rateLimitScript = `
+local key = KEYS[1]
+local capacity = tonumber(ARGV[1])
+local rate = tonumber(ARGV[2])
+local now = tonumber(ARGV[3])
+local requested = tonumber(ARGV[4] or 1)
+
+local bucket = redis.call('HMGET', key, 'tokens', 'last_refill')
+local tokens = tonumber(bucket[1])
+local last_refill = tonumber(bucket[2])
+
+if tokens == nil then
+    tokens = capacity
+    last_refill = now
+else
+    local elapsed = math.max(0, now - last_refill)
+    tokens = math.min(capacity, tokens + (elapsed * rate))
+    last_refill = now
+end
+
+local allowed = 0
+if tokens >= requested then
+    tokens = tokens - requested
+    allowed = 1
+end
+
+redis.call('HMSET', key, 'tokens', tokens, 'last_refill', last_refill)
+redis.call('EXPIRE', key, 60)
+
+return { allowed, tokens }
+`
+
+func (c *redisCache) Allow(ctx context.Context, key string, limit int, rate int) (bool, error) {
+	now := time.Now().Unix()
+	res, err := c.client.Eval(ctx, rateLimitScript, []string{key}, limit, rate, now, 1).Result()
+	if err != nil {
+		return false, err
+	}
+
+	results := res.([]interface{})
+	allowed := results[0].(int64) == 1
+	return allowed, nil
 }

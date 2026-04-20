@@ -208,8 +208,8 @@ func (s *userService) Refresh(ctx context.Context, refUuid, userId, role, tenant
 }
 
 func (s *userService) Create(ctx context.Context, req model.UserRequest) (*model.UserResponse, error) {
-	executorRole, okRole := ctx.Value(jwt.RoleKey{}).(string)
-	executorTenant, okTenant := ctx.Value(jwt.TenantKey{}).(string)
+	executorRole, okRole := ctx.Value(jwt.RoleKey).(string)
+	executorTenant, okTenant := ctx.Value(jwt.TenantKey).(string)
 
 	if !okRole || !okTenant {
 		s.log.Error("missing authorization context")

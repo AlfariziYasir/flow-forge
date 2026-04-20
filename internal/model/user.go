@@ -70,6 +70,10 @@ type UserLoginResponse struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
+type UserRefreshResponse struct {
+	AccessToken string `json:"access_token"`
+}
+
 type ListRequest struct {
 	PageSize   uint64 `json:"page_size"`
 	PageToken  string `json:"page_token"`

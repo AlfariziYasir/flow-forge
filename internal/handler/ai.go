@@ -5,18 +5,22 @@ import (
 	"net/http"
 
 	"flowforge/internal/services"
+	"flowforge/pkg/errorx"
 	"flowforge/pkg/logger"
+	"flowforge/pkg/response"
+
+	"go.uber.org/zap"
 )
 
 type AIHandler struct {
 	ais services.AIService
-	l   *logger.Logger
+	log *logger.Logger
 }
 
 func NewAIHandler(ais services.AIService, l *logger.Logger) *AIHandler {
 	return &AIHandler{
 		ais: ais,
-		l:   l,
+		log: l,
 	}
 }
 
@@ -31,31 +35,35 @@ type AIAnalyzeRequest struct {
 func (h *AIHandler) GenerateDAG(w http.ResponseWriter, r *http.Request) {
 	var req AIDAGRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		h.log.Error("failed decode request body", zap.Error(err))
+		errorx.HttpNewError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	dag, err := h.ais.GenerateDAGFromText(r.Context(), req.Prompt)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.log.Error("failed generate dag", zap.Error(err))
+		errorx.MapError(err).Write(w)
 		return
 	}
 
-	json.NewEncoder(w).Encode(dag)
+	response.SuccessWithData(w, http.StatusOK, "success", dag)
 }
 
 func (h *AIHandler) AnalyzeFailure(w http.ResponseWriter, r *http.Request) {
 	var req AIAnalyzeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		h.log.Error("failed decode request body", zap.Error(err))
+		errorx.HttpNewError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	analysis, err := h.ais.AnalyzeFailure(r.Context(), req.ErrorLog)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.log.Error("failed analyze failure", zap.Error(err))
+		errorx.MapError(err).Write(w)
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]string{"analysis": analysis})
+	response.SuccessWithData(w, http.StatusOK, "success", map[string]string{"analysis": analysis})
 }

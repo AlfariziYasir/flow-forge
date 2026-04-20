@@ -64,8 +64,8 @@ func TestUserService_Create_ForbiddenTenant(t *testing.T) {
 
 	svc := NewUserService(uRepo, tRepo, log, cfg, cache)
 
-	ctx := context.WithValue(context.Background(), jwt.RoleKey{}, "admin")
-	ctx = context.WithValue(ctx, jwt.TenantKey{}, "tenant-1")
+	ctx := context.WithValue(context.Background(), jwt.RoleKey, "admin")
+	ctx = context.WithValue(ctx, jwt.TenantKey, "tenant-1")
 
 	req := model.UserRequest{
 		Email:    "new@example.com",

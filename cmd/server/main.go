@@ -14,7 +14,6 @@ import (
 	"flowforge/internal/handler"
 	"flowforge/internal/repository"
 	"flowforge/internal/services"
-	"flowforge/pkg/jwt"
 	appLogger "flowforge/pkg/logger"
 	"flowforge/pkg/postgres"
 	"flowforge/pkg/redis"
@@ -50,7 +49,6 @@ func main() {
 	defer pool.Close()
 
 	uow := postgres.NewTransaction(pool)
-	tm := jwt.NewTokenManager("flowforge-super-secret-key-1234")
 
 	// Redis (Cache & Queue)
 	cache, err := redis.NewRedisCache(cfg.RedisAddress, cfg.RedisPassword, cfg.RedisDB)
@@ -90,7 +88,9 @@ func main() {
 		userHandler,
 		tenantHandler,
 		aiHandler,
-		tm,
+		cfg,
+		cache,
+		l,
 	)
 
 	srv := &http.Server{

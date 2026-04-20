@@ -7,6 +7,7 @@ import (
 	"flowforge/internal/handler"
 	"flowforge/internal/model"
 	"flowforge/pkg/logger"
+	"flowforge/pkg/response"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -44,10 +45,10 @@ func TestAIHandler_GenerateDAG(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	
-	var resp []model.StepDefinition
+	var resp response.Response[[]model.StepDefinition]
 	json.NewDecoder(rr.Body).Decode(&resp)
-	assert.Len(t, resp, 1)
-	assert.Equal(t, "step-1", resp[0].ID)
+	assert.Len(t, resp.Data, 1)
+	assert.Equal(t, "step-1", resp.Data[0].ID)
 	
 	svc.AssertExpectations(t)
 }

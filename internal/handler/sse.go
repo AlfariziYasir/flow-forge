@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"flowforge/internal/broadcaster"
+	"flowforge/pkg/jwt"
 )
 
 func SSEHandler(w http.ResponseWriter, r *http.Request) {
@@ -22,8 +23,8 @@ func SSEHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract tenantID from context (added by authMiddleware)
-	tenantID, ok := r.Context().Value("tenant_id").(string)
-	if !ok {
+	tenantID := jwt.GetTenant(r.Context())
+	if tenantID == "" {
 		http.Error(w, "Unauthorized: tenant_id missing", http.StatusUnauthorized)
 		return
 	}
