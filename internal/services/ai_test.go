@@ -4,27 +4,31 @@ import (
 	"context"
 	"testing"
 
+	"flowforge/pkg/logger"
+
 	"github.com/stretchr/testify/assert"
 )
 
-func TestAIService_GenerateDAGFromText(t *testing.T) {
-	svc := NewAIService()
+func TestAIService_GenerateDAGFromText_NoAPIKey(t *testing.T) {
+	log, _ := logger.New("info", "test", "1.0")
+	svc, _ := NewAIService("", log)
 	ctx := context.Background()
 
 	res, err := svc.GenerateDAGFromText(ctx, "Generate a simple DAG")
 
-	assert.NoError(t, err)
-	assert.Len(t, res, 2)
-	assert.Equal(t, "step_1", res[0].ID)
+	assert.Error(t, err)
+	assert.Nil(t, res)
+	assert.Contains(t, err.Error(), "not configured")
 }
 
-func TestAIService_AnalyzeFailure(t *testing.T) {
-	svc := NewAIService()
+func TestAIService_AnalyzeFailure_NoAPIKey(t *testing.T) {
+	log, _ := logger.New("info", "test", "1.0")
+	svc, _ := NewAIService("", log)
 	ctx := context.Background()
 
 	res, err := svc.AnalyzeFailure(ctx, "Some error log")
 
-	assert.NoError(t, err)
-	assert.NotEmpty(t, res)
-	assert.Contains(t, res, "Analysis based on error")
+	assert.Error(t, err)
+	assert.Empty(t, res)
+	assert.Contains(t, err.Error(), "not configured")
 }

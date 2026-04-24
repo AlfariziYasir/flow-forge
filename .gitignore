@@ -16,8 +16,8 @@ docs/
 # vendor/
 
 # Build artifacts
-server
-worker
+/server
+/worker
 
 # IDEs
 .idea/

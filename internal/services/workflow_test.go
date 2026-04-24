@@ -127,7 +127,7 @@ func TestWorkflowService_List(t *testing.T) {
 	}
 
 	workflows := []*model.Workflow{
-		{ID: uuid.New().String(), Name: "W1", TenantID: tenantID},
+		{ID: uuid.New().String(), Name: "W1", TenantID: tenantID, DAGDefinition: json.RawMessage(`[]`)},
 	}
 
 	wRepo.On("List", ctx, uint64(10), uint64(0), map[string]any{"tenant_id": tenantID}).
@@ -276,8 +276,41 @@ func TestWorkflowService_Trigger(t *testing.T) {
 	trx.On("Commit", ctx).Return(nil)
 	trx.On("Rollback", ctx).Return(nil)
 
-	res, err := svc.Trigger(ctx, "T1", "W1")
+	res, err := svc.Trigger(ctx, "T1", "W1", "MANUAL")
 
 	assert.NoError(t, err)
 	assert.NotNil(t, res)
+	assert.Equal(t, "MANUAL", res.TriggerType)
+}
+
+func TestWorkflowService_Trigger_StepExecutionTenantID(t *testing.T) {
+	wRepo := new(MockWorkflowRepository)
+	eRepo := new(MockExecutionRepository)
+	sRepo := new(MockStepExecutionRepository)
+	trx := new(MockTrx)
+	svc := NewWorkflowService(wRepo, eRepo, sRepo, trx, nil, logger.NewNop())
+
+	ctx := context.Background()
+	wf := &model.Workflow{
+		ID:            "W1",
+		TenantID:      "T1",
+		DAGDefinition: json.RawMessage(`[{"id": "s1", "action": "HTTP", "depends_on": []}]`),
+	}
+
+	// Verify that step execution is created with workflow's TenantID
+	sRepo.On("Create", ctx, mock.MatchedBy(func(step *model.StepExecution) bool {
+		return step.TenantID == wf.TenantID && step.ExecutionID != "" && step.StepID == "s1"
+	})).Return(nil)
+
+	wRepo.On("Get", ctx, mock.Anything, mock.Anything).Return(wf, nil)
+	trx.On("Begin", ctx).Return(ctx, nil)
+	eRepo.On("Create", ctx, mock.Anything).Return(nil)
+	trx.On("Commit", ctx).Return(nil)
+	trx.On("Rollback", ctx).Return(nil)
+
+	res, err := svc.Trigger(ctx, "T1", "W1", "MANUAL")
+
+	assert.NoError(t, err)
+	assert.NotNil(t, res)
+	sRepo.AssertExpectations(t)
 }

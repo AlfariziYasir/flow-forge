@@ -16,8 +16,8 @@ type StepExecutionRepository interface {
 	Create(ctx context.Context, step *model.StepExecution) error
 	Get(ctx context.Context, filters map[string]any, step *model.StepExecution) error
 	ListByExecution(ctx context.Context, executionID string) ([]*model.StepExecution, error)
+	List(ctx context.Context, executionID string, limit, offset uint64) ([]*model.StepExecution, int, error)
 	Update(ctx context.Context, id string, data map[string]any) error
-	ClaimPendingSteps(ctx context.Context, executionID string, limit int) ([]*model.StepExecution, error)
 }
 
 type stepExecutionRepository struct {
@@ -116,6 +116,44 @@ func (r *stepExecutionRepository) ListByExecution(ctx context.Context, execution
 	}
 
 	return results, nil
+}
+
+func (r *stepExecutionRepository) List(ctx context.Context, executionID string, limit, offset uint64) ([]*model.StepExecution, int, error) {
+	baseQuery := r.sq.Select((&model.StepExecution{}).Columns()...).
+		From((&model.StepExecution{}).Tablename()).
+		Where(squirrel.Eq{"execution_id": executionID})
+
+	// Get total count
+	countQuery := r.sq.Select("count(*)").From((&model.StepExecution{}).Tablename()).Where(squirrel.Eq{"execution_id": executionID})
+
+	sqlCount, argsCount, err := countQuery.ToSql()
+	if err != nil {
+		return nil, 0, errorx.NewError(errorx.ErrTypeInternal, "failed to build count query", err)
+	}
+
+	var total int
+	if err := r.getDB(ctx).QueryRow(ctx, sqlCount, argsCount...).Scan(&total); err != nil {
+		return nil, 0, errorx.DbError(err, "failed to count step executions")
+	}
+
+	// Get paginated results
+	sqlQuery, args, err := baseQuery.Limit(limit).Offset(offset).OrderBy("started_at ASC NULLS LAST").ToSql()
+	if err != nil {
+		return nil, 0, errorx.NewError(errorx.ErrTypeInternal, "failed to build list query", err)
+	}
+
+	rows, err := r.getDB(ctx).Query(ctx, sqlQuery, args...)
+	if err != nil {
+		return nil, 0, errorx.DbError(err, err.Error())
+	}
+	defer rows.Close()
+
+	results, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[model.StepExecution])
+	if err != nil {
+		return nil, 0, errorx.DbError(err, err.Error())
+	}
+
+	return results, total, nil
 }
 
 func (r *stepExecutionRepository) Update(ctx context.Context, id string, data map[string]any) error {

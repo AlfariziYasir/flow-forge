@@ -44,8 +44,8 @@ func (m *mockWFService) Rollback(ctx context.Context, req *model.WorkflowRollbac
 func (m *mockWFService) Delete(ctx context.Context, tenantID, name string) error {
 	return m.Called(ctx, tenantID, name).Error(0)
 }
-func (m *mockWFService) Trigger(ctx context.Context, tenantID, workflowID string) (*model.Execution, error) {
-	args := m.Called(ctx, tenantID, workflowID)
+func (m *mockWFService) Trigger(ctx context.Context, tenantID, workflowID, triggerType string) (*model.Execution, error) {
+	args := m.Called(ctx, tenantID, workflowID, triggerType)
 	return args.Get(0).(*model.Execution), args.Error(1)
 }
 

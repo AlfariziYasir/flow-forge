@@ -44,7 +44,7 @@ func (m *mockUserService) List(ctx context.Context, req model.ListRequest) ([]*m
 	args := m.Called(ctx, req)
 	return args.Get(0).([]*model.UserResponse), args.Int(1), args.String(2), args.Error(3)
 }
-func (m *mockUserService) Update(ctx context.Context, req model.UserRequest) (*model.UserResponse, error) {
+func (m *mockUserService) Update(ctx context.Context, req model.UserUpdateRequest) (*model.UserResponse, error) {
 	args := m.Called(ctx, req)
 	return args.Get(0).(*model.UserResponse), args.Error(1)
 }

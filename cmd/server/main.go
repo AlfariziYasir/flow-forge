@@ -71,7 +71,11 @@ func main() {
 	execService := services.NewExecutionService(execRepo, sExecRepo, wfRepo, l, uow, cache)
 	userService := services.NewUserService(userRepo, tenantRepo, l, cfg, cache)
 	tenantService := services.NewTenantService(tenantRepo, l)
-	aiService := services.NewAIService()
+	aiService, err := services.NewAIService(cfg.GeminiAPIKey, l)
+	if err != nil {
+		l.Warn("failed to initialize AI service, AI features will be disabled", zap.Error(err))
+		aiService, _ = services.NewAIService("", l)
+	}
 	
 	// Handlers
 	authHandler := handler.NewAuthHandler(userService, l)

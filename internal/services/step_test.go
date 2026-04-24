@@ -34,13 +34,15 @@ func TestStepExecutionService_List(t *testing.T) {
 	svc := NewStepExecutionService(sRepo, logger.NewNop(), nil)
 
 	ctx := context.Background()
-	execID := uuid.New().String()
-	steps := []*model.StepExecution{{ID: "s1", ExecutionID: execID}}
+	req := model.ListStepExecutionRequest{PageSize: 10}
+	steps := []*model.StepExecution{{ID: "1"}}
 
-	sRepo.On("ListByExecution", ctx, execID).Return(steps, nil)
+	sRepo.On("List", ctx, req.ExecutionID, uint64(req.PageSize), uint64(0)).Return(steps, 1, nil)
 
-	res, err := svc.List(ctx, execID)
+	res, count, token, err := svc.List(ctx, req)
 
 	assert.NoError(t, err)
 	assert.Len(t, res, 1)
+	assert.Equal(t, 1, count)
+	assert.Equal(t, "", token)
 }

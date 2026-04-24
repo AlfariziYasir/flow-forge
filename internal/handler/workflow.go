@@ -106,7 +106,7 @@ func (h *WorkflowHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	}
 	id := chi.URLParam(r, "id")
 
-	exe, err := h.ws.Trigger(r.Context(), tenantID, id)
+	exe, err := h.ws.Trigger(r.Context(), tenantID, id, "MANUAL")
 	if err != nil {
 		h.log.Error("failed trigger workflow", zap.Error(err))
 		errorx.MapError(err).Write(w)

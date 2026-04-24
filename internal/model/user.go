@@ -48,6 +48,14 @@ type UserRequest struct {
 	Role     string `json:"role"`
 }
 
+type UserUpdateRequest struct {
+	UserID   string `json:"user_id"`
+	TenantID string `json:"-"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	Role     string `json:"-"`
+}
+
 type UserResponse struct {
 	UserID     string     `json:"user_id"`
 	TenantID   string     `json:"tenant_id"`

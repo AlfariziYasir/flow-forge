@@ -51,24 +51,31 @@ func NewRouter(
 		r.Get("/monitor/stream", SSEHandler)
 
 		r.Route("/workflows", func(r chi.Router) {
-			r.Post("/", wfHandler.Create)
+			r.Group(func(r chi.Router) {
+				r.Use(RBACMiddleware("admin", "editor"))
+				r.Post("/", wfHandler.Create)
+				r.Put("/{id}", wfHandler.Update)
+				r.Delete("/{name}", wfHandler.Delete)
+				r.Post("/{id}/trigger", wfHandler.Trigger)
+				r.Post("/{id}/rollback", wfHandler.Rollback)
+			})
 			r.Get("/", wfHandler.List)
 			r.Get("/{id}", wfHandler.Get)
-			r.Put("/{id}", wfHandler.Update)
-			r.Delete("/{name}", wfHandler.Delete)
-			r.Post("/{id}/trigger", wfHandler.Trigger)
-			r.Post("/{id}/rollback", wfHandler.Rollback)
 			r.Get("/{name}/versions", wfHandler.ListVersions)
 		})
 
 		r.Route("/executions", func(r chi.Router) {
+			r.Group(func(r chi.Router) {
+				r.Use(RBACMiddleware("admin", "editor"))
+				r.Post("/{id}/retry", execHandler.Retry)
+				r.Post("/{id}/cancel", execHandler.Cancel)
+			})
 			r.Get("/", execHandler.List)
 			r.Get("/{id}", execHandler.Get)
-			r.Post("/{id}/retry", execHandler.Retry)
-			r.Post("/{id}/cancel", execHandler.Cancel)
 		})
 
 		r.Route("/ai", func(r chi.Router) {
+			r.Use(RBACMiddleware("admin", "editor"))
 			r.Post("/generate", aiHandler.GenerateDAG)
 			r.Post("/analyze", aiHandler.AnalyzeFailure)
 		})

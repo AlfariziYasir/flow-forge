@@ -22,6 +22,7 @@ type Config struct {
 	RedisPassword   string        `env:"REDIS_PASSWORD"`
 	RedisDB         int           `env:"REDIS_DB"`
 	SwaggerPath     string        `env:"SWAGGER_PATH"`
+	GeminiAPIKey    string        `env:"GEMINI_API_KEY"`
 }
 
 func NewConfig() (*Config, error) {

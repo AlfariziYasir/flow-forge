@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"slices"
 	"strconv"
 	"time"
 
@@ -79,6 +78,15 @@ func (s *executionService) List(ctx context.Context, req model.ListExecutionRequ
 		}
 	}
 
+	if req.PageSize <= 0 {
+	    req.PageSize = 20
+	}
+	if req.PageSize > 100 {
+	    return nil, 0, "", errorx.NewValidationError(map[string]string{
+	        "page_size": "max page size is 100",
+	    })
+	}
+
 	filters := map[string]any{
 		"tenant_id": req.TenantID,
 	}
@@ -106,7 +114,7 @@ func (s *executionService) List(ctx context.Context, req model.ListExecutionRequ
 		nextPageToken = base64.StdEncoding.EncodeToString([]byte(strconv.FormatUint(nextOffset, 10)))
 	}
 
-	res := slices.Grow([]*model.ExecutionResponse{}, len(executions))
+	res := make([]*model.ExecutionResponse, 0, len(executions))
 	for _, exec := range executions {
 		res = append(res, &model.ExecutionResponse{
 			ID:          exec.ID,
@@ -133,8 +141,8 @@ func (s *executionService) Retry(ctx context.Context, tenantID, executionID stri
 	}
 
 	if oldExec.Status != model.StatusExecutionFailed {
-		s.log.Error("executions not in failed state")
-		return errorx.NewError(errorx.ErrTypeConflict, "execution not in failed state", nil)
+		s.log.Error("execution is not in failed state")
+		return errorx.NewError(errorx.ErrTypeConflict, "execution is not in failed state", nil)
 	}
 
 	var workflow model.Workflow
@@ -214,8 +222,8 @@ func (s *executionService) Cancel(ctx context.Context, tenantID, executionID str
 	}
 
 	if exec.Status != model.StatusExecutionRunning {
-		s.log.Error("executions not in running state")
-		return errorx.NewError(errorx.ErrTypeConflict, "execution not in running state", nil)
+		s.log.Error("execution is not in running state")
+		return errorx.NewError(errorx.ErrTypeConflict, "execution is not in running state", nil)
 	}
 
 	err = s.eRepo.Update(ctx, exec.ID, exec.Version, map[string]any{"tenant_id": tenantID, "status": model.StatusExecutionCancelled})

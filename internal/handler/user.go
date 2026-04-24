@@ -7,6 +7,7 @@ import (
 	"flowforge/internal/model"
 	"flowforge/internal/services"
 	"flowforge/pkg/errorx"
+	"flowforge/pkg/jwt"
 	"flowforge/pkg/logger"
 	"flowforge/pkg/response"
 
@@ -58,8 +59,35 @@ func (h *UserHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) List(w http.ResponseWriter, r *http.Request) {
+	role := r.Context().Value(jwt.RoleKey).(string)
+	if role == "" {
+		errorx.HttpNewError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	tenant := r.Context().Value(jwt.TenantKey).(string)
+	if tenant == "" {
+		errorx.HttpNewError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
 	req := model.ListRequest{
-		PageSize: 50,
+		TenantID: tenant,
+		Role: role,
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.log.Error("failed decode request body", zap.Error(err))
+		errorx.HttpNewError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.PageSize <= 0 {
+    req.PageSize = 20 // default
+	}
+	if req.PageSize > 100 {
+		h.log.Error("invalid page size", zap.Int("page_size", int(req.PageSize)))
+		errorx.HttpNewError(w, http.StatusBadRequest, "max page size is 100")
+		return
 	}
 
 	users, count, _, err := h.us.List(r.Context(), req)
@@ -76,7 +104,22 @@ func (h *UserHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
-	var req model.UserRequest
+	role := r.Context().Value(jwt.RoleKey).(string)
+	if role == "" {
+		errorx.HttpNewError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	tenant := r.Context().Value(jwt.TenantKey).(string)
+	if tenant == "" {
+		errorx.HttpNewError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	req := model.UserUpdateRequest{
+		TenantID: tenant,
+		Role: role,
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.log.Error("failed decode request body", zap.Error(err))
 		errorx.HttpNewError(w, http.StatusBadRequest, "invalid request body")

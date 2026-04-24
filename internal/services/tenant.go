@@ -86,6 +86,15 @@ func (s *tenantService) List(ctx context.Context, req model.ListTenantRequest) (
 		}
 	}
 
+	if req.PageSize <= 0 {
+	    req.PageSize = 20 // default
+	}
+	if req.PageSize > 100 {
+	    return nil, 0, "", errorx.NewValidationError(map[string]string{
+	        "page_size": "max page size is 100",
+	    })
+	}
+
 	filters := make(map[string]any, 0)
 	if req.TenantName != "" {
 		filters["name"] = req.TenantName
@@ -134,6 +143,7 @@ func (s *tenantService) Update(ctx context.Context, req model.TenantRequest) (*m
 		Name:      tenant.Name,
 		IsActive:  tenant.IsActive,
 		CreatedAt: tenant.CreatedAt,
+		UpdatedAt: tenant.UpdatedAt,
 	}, nil
 }
 

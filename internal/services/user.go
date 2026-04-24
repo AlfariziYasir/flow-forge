@@ -12,7 +12,6 @@ import (
 	"flowforge/pkg/logger"
 	"flowforge/pkg/redis"
 	"fmt"
-	"slices"
 	"strconv"
 	"time"
 
@@ -25,12 +24,12 @@ import (
 
 type UserService interface {
 	Login(ctx context.Context, req model.UserLoginRequest) (string, string, error)
-	Logout(ctx context.Context, accUuid, refUuid string) error
-	Refresh(ctx context.Context, refUuid, userId, role, tenantID string) (string, error)
+	Logout(ctx context.Context, accUUID, refUUID string) error
+	Refresh(ctx context.Context, refUUID, userID, role, tenantID string) (string, error)
 	Create(ctx context.Context, req model.UserRequest) (*model.UserResponse, error)
 	Get(ctx context.Context, id string) (*model.UserResponse, error)
 	List(ctx context.Context, req model.ListRequest) ([]*model.UserResponse, int, string, error)
-	Update(ctx context.Context, req model.UserRequest) (*model.UserResponse, error)
+	Update(ctx context.Context, req model.UserUpdateRequest) (*model.UserResponse, error)
 	Delete(ctx context.Context, id string) error
 }
 
@@ -112,10 +111,10 @@ func (s *userService) Login(ctx context.Context, req model.UserLoginRequest) (st
 	return acc, ref, nil
 }
 
-func (s *userService) Logout(ctx context.Context, accUuid, refUuid string) error {
+func (s *userService) Logout(ctx context.Context, accUUID, refUUID string) error {
 	err := s.cache.Delete(
 		ctx,
-		fmt.Sprintf("%s:%s", jwt.RefKey, refUuid),
+		fmt.Sprintf("%s:%s", jwt.RefKey, refUUID),
 	)
 	if err != nil {
 		s.log.Error("failed to delete auth", zap.Error(err))
@@ -124,7 +123,7 @@ func (s *userService) Logout(ctx context.Context, accUuid, refUuid string) error
 
 	err = s.cache.Set(
 		ctx,
-		fmt.Sprintf("%s:%s", jwt.BlacklistKey, accUuid),
+		fmt.Sprintf("%s:%s", jwt.BlacklistKey, accUUID),
 		"revoked",
 		s.cfg.AccessTokenExp,
 	)
@@ -136,9 +135,9 @@ func (s *userService) Logout(ctx context.Context, accUuid, refUuid string) error
 	return nil
 }
 
-func (s *userService) Refresh(ctx context.Context, refUuid, userId, role, tenantID string) (string, error) {
+func (s *userService) Refresh(ctx context.Context, refUUID, userID, role, tenantID string) (string, error) {
 	var cache map[string]any
-	value, err := s.cache.Get(ctx, fmt.Sprintf("%s:%s", jwt.RefKey, refUuid))
+	value, err := s.cache.Get(ctx, fmt.Sprintf("%s:%s", jwt.RefKey, refUUID))
 	if err != nil {
 		s.log.Error("failed get refresh token", zap.Error(err))
 		return "", errorx.NewError(errorx.ErrTypeUnauthorized, "token invalid", err)
@@ -178,9 +177,9 @@ func (s *userService) Refresh(ctx context.Context, refUuid, userId, role, tenant
 	}
 	acc, err := jwt.AccessToken(
 		baseToken,
-		jwt.WithOption("user_id", userId),
+		jwt.WithOption("user_id", userID),
 		jwt.WithOption("role", role),
-		jwt.WithOption("ref_uuid", refUuid),
+		jwt.WithOption("ref_uuid", refUUID),
 		jwt.WithOption("tenant_id", tenantID),
 	)
 	if err != nil {
@@ -190,12 +189,12 @@ func (s *userService) Refresh(ctx context.Context, refUuid, userId, role, tenant
 
 	val := map[string]any{
 		"acc_uuid":  baseToken.AccUuid,
-		"user_id":   userId,
+		"user_id":   userID,
 		"tenant_id": tenantID,
 	}
 	err = s.cache.Set(
 		ctx,
-		fmt.Sprintf("%s:%s", jwt.RefKey, refUuid),
+		fmt.Sprintf("%s:%s", jwt.RefKey, refUUID),
 		val,
 		baseToken.RefDuration,
 	)
@@ -248,6 +247,7 @@ func (s *userService) Create(ctx context.Context, req model.UserRequest) (*model
 	var user model.User
 	err = s.uRepo.Get(ctx, map[string]any{"email": req.Email}, true, &user)
 	if err == nil && user.ID != "" {
+		s.log.Warn("email update conflict", zap.String("email", req.Email))
 		return nil, errorx.NewError(errorx.ErrTypeConflict, "email already registered", nil)
 	}
 
@@ -283,12 +283,23 @@ func (s *userService) Create(ctx context.Context, req model.UserRequest) (*model
 }
 
 func (s *userService) Get(ctx context.Context, id string) (*model.UserResponse, error) {
+	ctxTenantID, ok := ctx.Value(jwt.TenantKey).(string)
+	if !ok {
+		s.log.Error("missing tenant context")
+		return nil, errorx.NewError(errorx.ErrTypeUnauthorized, "unauthorized request", nil)
+	}
+
 	var user model.User
 
 	err := s.uRepo.Get(ctx, map[string]any{"id": id}, true, &user)
 	if err != nil {
 		s.log.Error("failed to get user by id", zap.Error(err))
 		return nil, err
+	}
+
+	if user.TenantID != ctxTenantID {
+		s.log.Warn("tenant mismatch on get user", zap.String("user_tenant_id", user.TenantID), zap.String("ctx_tenant_id", ctxTenantID))
+		return nil, errorx.NewError(errorx.ErrTypeUnauthorized, "access denied", nil)
 	}
 
 	var tenant model.Tenant
@@ -322,8 +333,23 @@ func (s *userService) List(ctx context.Context, req model.ListRequest) ([]*model
 		}
 	}
 
+	if req.PageSize <= 0 {
+    	req.PageSize = 20
+	}
+	if req.PageSize > 100 {
+	    return nil, 0, "", errorx.NewValidationError(map[string]string{
+	        "page_size": "max page size is 100",
+	    })
+	}
+
+	// Enforce tenant isolation from context
+	ctxTenantID, ok := ctx.Value(jwt.TenantKey).(string)
+	if !ok {
+		return nil, 0, "", errorx.NewError(errorx.ErrTypeUnauthorized, "unauthorized request", nil)
+	}
+
 	filters := map[string]any{
-		"tenant_id": req.TenantID,
+		"tenant_id": ctxTenantID,
 	}
 	if req.Role != "" {
 		filters["role"] = req.Role
@@ -339,35 +365,60 @@ func (s *userService) List(ctx context.Context, req model.ListRequest) ([]*model
 		return nil, 0, "", err
 	}
 
+	// Fetch tenant name once for all users in the result set
+	var tenant model.Tenant
+	err = s.tRepo.Get(ctx, map[string]any{"id": ctxTenantID}, true, &tenant)
+	if err != nil {
+		s.log.Error("failed to get tenant name", zap.Error(err))
+		return nil, 0, "", err
+	}
+
 	nextPageToken := ""
 	if count == int(req.PageSize) {
 		nextOffset := offset + uint64(req.PageSize)
 		nextPageToken = base64.StdEncoding.EncodeToString([]byte(strconv.FormatUint(nextOffset, 10)))
 	}
 
-	res := slices.Grow([]*model.UserResponse{}, len(users))
+	res := make([]*model.UserResponse, 0, len(users))
 	for _, user := range users {
 		res = append(res, &model.UserResponse{
-			UserID:    user.ID,
-			TenantID:  user.TenantID,
-			Email:     user.Email,
-			Role:      user.Role,
-			IsActive:  user.IsActive,
-			CreatedAt: user.CreatedAt,
-			UpdatedAt: user.UpdatedAt,
+			UserID:     user.ID,
+			TenantID:   user.TenantID,
+			TenantName: tenant.Name,
+			Email:      user.Email,
+			Role:       user.Role,
+			IsActive:   user.IsActive,
+			CreatedAt:  user.CreatedAt,
+			UpdatedAt:  user.UpdatedAt,
 		})
 	}
 
 	return res, count, nextPageToken, nil
 }
 
-func (s *userService) Update(ctx context.Context, req model.UserRequest) (*model.UserResponse, error) {
+func (s *userService) Update(ctx context.Context, req model.UserUpdateRequest) (*model.UserResponse, error) {
+	ctxTenantID, ok := ctx.Value(jwt.TenantKey).(string)
+	if !ok {
+		s.log.Error("missing tenant context")
+		return nil, errorx.NewError(errorx.ErrTypeUnauthorized, "unauthorized request", nil)
+	}
+
 	var user model.User
 
 	err := s.uRepo.Get(ctx, map[string]any{"id": req.UserID}, true, &user)
 	if err != nil {
 		s.log.Error("failed to get user by id", zap.Error(err))
 		return nil, err
+	}
+
+	if user.TenantID != ctxTenantID {
+		s.log.Warn("tenant mismatch on update user", zap.String("user_tenant_id", user.TenantID), zap.String("ctx_tenant_id", ctxTenantID))
+		return nil, errorx.NewError(errorx.ErrTypeUnauthorized, "access denied", nil)
+	}
+
+	if user.TenantID != req.TenantID {
+		s.log.Warn("tenant id mismatch", zap.String("user_tenant_id", user.TenantID), zap.String("req_tenant_id", req.TenantID))
+		return nil, errorx.NewError(errorx.ErrTypeConflict, "access denied", nil)
 	}
 
 	if user.Email != req.Email {
@@ -388,14 +439,21 @@ func (s *userService) Update(ctx context.Context, req model.UserRequest) (*model
 		return nil, err
 	}
 
+	var tenant model.Tenant
+	err = s.tRepo.Get(ctx, map[string]any{"id": user.TenantID}, true, &tenant)
+	if err != nil {
+		return nil, err
+	}
+
 	return &model.UserResponse{
-		UserID:    user.ID,
-		TenantID:  user.TenantID,
-		Email:     user.Email,
-		Role:      user.Role,
-		IsActive:  user.IsActive,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
+		UserID:     user.ID,
+		TenantID:   user.TenantID,
+		TenantName: tenant.Name,
+		Email:      user.Email,
+		Role:       user.Role,
+		IsActive:   user.IsActive,
+		CreatedAt:  user.CreatedAt,
+		UpdatedAt:  user.UpdatedAt,
 	}, nil
 }
 

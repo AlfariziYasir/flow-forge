@@ -24,12 +24,13 @@ type ExecutionEngine interface {
 }
 
 type engine struct {
-	execRepo  repository.ExecutionRepository
-	stepRepo  repository.StepExecutionRepository
-	uow       postgres.Trx
-	l         *logger.Logger
-	registry  *Registry
-	broadcast Broadcaster
+	execRepo     repository.ExecutionRepository
+	stepRepo     repository.StepExecutionRepository
+	uow          postgres.Trx
+	l            *logger.Logger
+	registry     *Registry
+	broadcast    Broadcaster
+	stepTimeout  time.Duration
 }
 
 func NewExecutionEngine(
@@ -38,6 +39,7 @@ func NewExecutionEngine(
 	uow postgres.Trx,
 	l *logger.Logger,
 	broadcast Broadcaster,
+	stepTimeout time.Duration,
 ) *engine {
 	r := NewRegistry()
 	// Register default actions
@@ -46,13 +48,19 @@ func NewExecutionEngine(
 	r.Registry("TRANSFORM", NewTransformAction())
 	r.Registry("SCRIPT", &ScriptAction{})
 
+	// Default timeout of 5 minutes if not specified
+	if stepTimeout <= 0 {
+		stepTimeout = 5 * time.Minute
+	}
+
 	return &engine{
-		execRepo:  execRepo,
-		stepRepo:  stepRepo,
-		uow:       uow,
-		l:         l,
-		registry:  r,
-		broadcast: broadcast,
+		execRepo:    execRepo,
+		stepRepo:    stepRepo,
+		uow:         uow,
+		l:           l,
+		registry:    r,
+		broadcast:   broadcast,
+		stepTimeout: stepTimeout,
 	}
 }
 
@@ -139,14 +147,20 @@ func (e *engine) executeStepWithRetry(
 	}
 
 	for i := 0; i < maxRetries; i++ {
+		// Get step execution record for this step
+		stepExec, err := e.getStepExecution(ctx, execution.ID, def.ID)
+		if err != nil {
+			return fmt.Errorf("failed to get step execution: %w", err)
+		}
+
 		updateMap := map[string]any{"status": string(model.StatusExecutionRunning)}
 		if i == 0 {
 			updateMap["started_at"] = time.Now()
 		}
 
-		err := e.execRepo.Update(ctx, execution.ID, execution.Version, updateMap)
-		if err == nil {
-			execution.Version++
+		err = e.stepRepo.Update(ctx, stepExec.ID, updateMap)
+		if err != nil {
+			e.l.Warn("failed to update step status to RUNNING", zap.String("step_id", def.ID), zap.Error(err))
 		}
 
 		// Broadcast step running
@@ -163,13 +177,37 @@ func (e *engine) executeStepWithRetry(
 			return err
 		}
 
-		result, err := action.Execute(ctx, params)
+		// Create a timeout context for this step execution
+		stepCtx, cancel := context.WithTimeout(ctx, e.stepTimeout)
+		defer cancel()
+
+		result, err := action.Execute(stepCtx, params)
 		if err != nil {
 			e.l.Warn("step execution failed", zap.String("step_id", def.ID), zap.Int("attempt", i+1), zap.Error(err))
+
+			// Update retry count in DB
+			retryErr := e.stepRepo.Update(ctx, stepExec.ID, map[string]any{
+				"retry_count": stepExec.RetryCount + 1,
+				"error_log":   err.Error(),
+			})
+			if retryErr != nil {
+				e.l.Warn("failed to update retry count", zap.Error(retryErr))
+			}
+
 			if i < maxRetries-1 {
 				backoff := time.Duration(1<<uint(i)) * time.Second
 				time.Sleep(backoff)
 				continue
+			}
+
+			// Update step status to FAILED in DB when retries exhausted
+			failErr := e.stepRepo.Update(ctx, stepExec.ID, map[string]any{
+				"status":        string(model.StatusExecutionFailed),
+				"completed_at":  time.Now(),
+				"error_log":     err.Error(),
+			})
+			if failErr != nil {
+				e.l.Error("failed to update step to FAILED", zap.Error(failErr))
 			}
 
 			// Broadcast step failure
@@ -194,7 +232,7 @@ func (e *engine) executeStepWithRetry(
 		}
 
 		// Update step status to SUCCESS
-		err = e.sRepoUpdate(ctx, execution.ID, def.ID, map[string]any{
+		err = e.stepRepo.Update(ctx, stepExec.ID, map[string]any{
 			"status":       string(model.StatusExecutionSuccess),
 			"completed_at": time.Now(),
 			"output":       result,
@@ -214,17 +252,25 @@ func (e *engine) executeStepWithRetry(
 	return nil
 }
 
-func (e *engine) sRepoUpdate(ctx context.Context, execID, stepID string, data map[string]any) error {
+func (e *engine) getStepExecution(ctx context.Context, execID, stepID string) (*model.StepExecution, error) {
 	steps, err := e.stepRepo.ListByExecution(ctx, execID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, s := range steps {
 		if s.StepID == stepID {
-			return e.stepRepo.Update(ctx, s.ID, data)
+			return s, nil
 		}
 	}
-	return fmt.Errorf("step execution not found for step %s", stepID)
+	return nil, fmt.Errorf("step execution not found for step %s", stepID)
+}
+
+func (e *engine) sRepoUpdate(ctx context.Context, execID, stepID string, data map[string]any) error {
+	step, err := e.getStepExecution(ctx, execID, stepID)
+	if err != nil {
+		return err
+	}
+	return e.stepRepo.Update(ctx, step.ID, data)
 }
 
 func (e *engine) markExecutionFailed(ctx context.Context, execution *model.Execution, err error) {

@@ -1,7 +1,6 @@
 package handler
 
 import (
-
 	"net/http"
 
 	"flowforge/internal/model"
@@ -53,10 +52,9 @@ func (h *ExecutionHandler) List(w http.ResponseWriter, r *http.Request) {
 		errorx.HttpNewError(w, http.StatusUnauthorized, "invalid request")
 		return
 	}
-	
+
 	req := model.ListExecutionRequest{
 		TenantID: tenantID,
-		PageSize: 50,
 	}
 
 	dtos, count, _, err := h.es.List(r.Context(), req)
@@ -67,7 +65,7 @@ func (h *ExecutionHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.SuccessWithData(w, http.StatusOK, "success", map[string]interface{}{
-		"data": dtos,
+		"data":  dtos,
 		"total": count,
 	})
 }
@@ -81,7 +79,8 @@ func (h *ExecutionHandler) Retry(w http.ResponseWriter, r *http.Request) {
 	}
 	id := chi.URLParam(r, "id")
 
-	if err := h.es.Retry(r.Context(), tenantID, id); err != nil {
+	err := h.es.Retry(r.Context(), tenantID, id)
+	if err != nil {
 		h.log.Error("failed retry execution", zap.Error(err))
 		errorx.MapError(err).Write(w)
 		return

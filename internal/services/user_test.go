@@ -89,7 +89,9 @@ func TestUserService_List(t *testing.T) {
 
 	svc := NewUserService(uRepo, tRepo, log, cfg, cache)
 
-	ctx := context.Background()
+	ctx := context.WithValue(context.Background(), jwt.TenantKey, "tenant-1")
+	ctx = context.WithValue(ctx, jwt.RoleKey, "admin")
+
 	req := model.ListRequest{
 		PageSize: 10,
 		TenantID: "tenant-1",
@@ -103,12 +105,16 @@ func TestUserService_List(t *testing.T) {
 	uRepo.On("List", ctx, uint64(10), uint64(0), map[string]any{"tenant_id": "tenant-1", "role": "editor"}).
 		Return(users, 1, nil)
 
+	tRepo.On("Get", ctx, map[string]any{"id": "tenant-1"}, true, mock.AnythingOfType("*model.Tenant")).
+		Return(&model.Tenant{ID: "tenant-1", Name: "Tenant1"}, nil)
+
 	res, count, _, err := svc.List(ctx, req)
 
 	assert.NoError(t, err)
 	assert.Equal(t, 1, count)
 	assert.Len(t, res, 1)
 	uRepo.AssertExpectations(t)
+	tRepo.AssertExpectations(t)
 }
 
 func TestUserService_Logout(t *testing.T) {
@@ -156,7 +162,9 @@ func TestUserService_Get(t *testing.T) {
 	tRepo := new(MockTenantRepository)
 	svc := NewUserService(uRepo, tRepo, logger.NewNop(), nil, nil)
 
-	ctx := context.Background()
+	ctx := context.WithValue(context.Background(), jwt.TenantKey, "t1")
+	ctx = context.WithValue(ctx, jwt.RoleKey, "admin")
+
 	u := &model.User{ID: "u1", TenantID: "t1"}
 	tenant := &model.Tenant{ID: "t1", Name: "Tenant1"}
 
@@ -171,16 +179,21 @@ func TestUserService_Get(t *testing.T) {
 
 func TestUserService_Update(t *testing.T) {
 	uRepo := new(MockUserRepository)
-	svc := NewUserService(uRepo, nil, logger.NewNop(), nil, nil)
+	tRepo := new(MockTenantRepository)
+	svc := NewUserService(uRepo, tRepo, logger.NewNop(), nil, nil)
 
-	ctx := context.Background()
-	u := &model.User{ID: "u1", Email: "old@e.com", Version: 1}
+	ctx := context.WithValue(context.Background(), jwt.TenantKey, "T1")
+	ctx = context.WithValue(ctx, jwt.RoleKey, "admin")
+
+	u := &model.User{ID: "u1", Email: "old@e.com", TenantID: "T1", Version: 1}
+	tenant := &model.Tenant{ID: "T1", Name: "Tenant1"}
 
 	uRepo.On("Get", ctx, map[string]any{"id": "u1"}, true, mock.Anything).Return(u, nil)
 	uRepo.On("Get", ctx, map[string]any{"email": "new@e.com"}, true, mock.Anything).Return(nil, errors.New("not found"))
 	uRepo.On("Update", ctx, "u1", 1, mock.Anything).Return(nil)
+	tRepo.On("Get", ctx, map[string]any{"id": "T1"}, true, mock.Anything).Return(tenant, nil)
 
-	res, err := svc.Update(ctx, model.UserRequest{UserID: "u1", Email: "new@e.com"})
+	res, err := svc.Update(ctx, model.UserUpdateRequest{UserID: "u1", Email: "new@e.com", TenantID: "T1"})
 
 	assert.NoError(t, err)
 	assert.NotNil(t, res)

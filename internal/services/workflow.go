@@ -28,7 +28,7 @@ type WorkflowService interface {
 	Update(ctx context.Context, req *model.WorkflowRequest) error
 	Rollback(ctx context.Context, req *model.WorkflowRollbackRequest) error
 	Delete(ctx context.Context, tenantID, name string) error
-	Trigger(ctx context.Context, tenantID, workflowID string) (*model.Execution, error)
+	Trigger(ctx context.Context, tenantID, workflowID, triggerType string) (*model.Execution, error)
 }
 
 type workflowService struct {
@@ -110,6 +110,7 @@ func (s *workflowService) Get(ctx context.Context, tenantID, id string) (*model.
 	var steps []model.StepDefinition
 	if err := json.Unmarshal(wf.DAGDefinition, &steps); err != nil {
 		s.log.Error("failed to unmarshal dag definition", zap.Error(err), zap.String("id", wf.ID))
+		return nil, errorx.NewError(errorx.ErrTypeValidation, "invalid dag definition", err)
 	}
 
 	return &model.WorkflowResponse{
@@ -138,6 +139,15 @@ func (s *workflowService) List(ctx context.Context, req model.ListWorkflowReques
 		}
 	}
 
+	if req.PageSize <= 0 {
+	    req.PageSize = 20 // default
+	}
+	if req.PageSize > 100 {
+	    return nil, 0, "", errorx.NewValidationError(map[string]string{
+	        "page_size": "max page size is 100",
+	    })
+	}
+
 	filters := map[string]any{
 		"tenant_id": req.TenantID,
 	}
@@ -157,11 +167,12 @@ func (s *workflowService) List(ctx context.Context, req model.ListWorkflowReques
 		nextPageToken = base64.StdEncoding.EncodeToString([]byte(strconv.FormatUint(nextOffset, 10)))
 	}
 
-	res := slices.Grow([]*model.WorkflowResponse{}, len(workflows))
+	res := make([]*model.WorkflowResponse, 0, len(workflows))
 	for _, wf := range workflows {
 		var steps []model.StepDefinition
 		if err := json.Unmarshal(wf.DAGDefinition, &steps); err != nil {
 			s.log.Error("failed to unmarshal dag definition", zap.Error(err), zap.String("id", wf.ID))
+			return nil, 0, "", errorx.NewError(errorx.ErrTypeValidation, "invalid dag definition", err)
 		}
 		res = append(res, &model.WorkflowResponse{
 			WorkflowID:    wf.ID,
@@ -321,9 +332,17 @@ func (s *workflowService) Delete(ctx context.Context, tenantID, name string) err
 	return nil
 }
 
-func (s *workflowService) Trigger(ctx context.Context, tenantID, workflowID string) (*model.Execution, error) {
+func (s *workflowService) Trigger(ctx context.Context, tenantID, workflowID, triggerType string) (*model.Execution, error) {
+	if triggerType == "" {
+		triggerType = "MANUAL"
+	}
+
 	var wf model.Workflow
-	err := s.wRepo.Get(ctx, map[string]any{"id": workflowID, "tenant_id": tenantID, "is_current": true}, &wf)
+	err := s.wRepo.Get(ctx, map[string]any{
+		"id": workflowID,
+		"tenant_id": tenantID,
+		"is_current": true,
+	}, &wf)
 	if err != nil {
 		return nil, err
 	}
@@ -337,11 +356,11 @@ func (s *workflowService) Trigger(ctx context.Context, tenantID, workflowID stri
 	now := time.Now()
 	execution := &model.Execution{
 		ID:          uuid.New().String(),
-		TenantID:    tenantID,
+		TenantID:    wf.TenantID,
 		WorkflowID:  wf.ID,
 		Status:      string(model.StatusExecutionPending),
-		TriggerType: "MANUAL",
-		Version:     1,
+		TriggerType: triggerType,
+		Version:     wf.Version,
 		CreatedAt:   now,
 	}
 
@@ -360,7 +379,7 @@ func (s *workflowService) Trigger(ctx context.Context, tenantID, workflowID stri
 	for _, stepDef := range steps {
 		stepRec := &model.StepExecution{
 			ID:          uuid.New().String(),
-			TenantID:    tenantID,
+			TenantID:    wf.TenantID,
 			ExecutionID: execution.ID,
 			StepID:      stepDef.ID,
 			Action:      stepDef.Action,
