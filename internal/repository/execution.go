@@ -7,6 +7,7 @@ import (
 	"flowforge/internal/model"
 	"flowforge/pkg/errorx"
 	"flowforge/pkg/postgres"
+	"time"
 
 	"github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
@@ -18,6 +19,8 @@ type ExecutionRepository interface {
 	List(ctx context.Context, limit, offset uint64, filters map[string]any) ([]*model.Execution, int, error)
 	Update(ctx context.Context, id string, currentVersion int, data map[string]any) error
 	AcquireForWorker(ctx context.Context, limit int) ([]*model.Execution, error)
+	AcquireByIDForWorker(ctx context.Context, id string) (*model.Execution, error)
+	RecoverStuckJobs(ctx context.Context, timeout time.Duration) (int64, error)
 }
 
 type executionRepository struct {
@@ -99,7 +102,12 @@ func (r *executionRepository) List(ctx context.Context, limit, offset uint64, fi
 
 	if len(filters) > 0 {
 		for k, v := range filters {
-			query = query.Where(squirrel.ILike{k: fmt.Sprintf("%%%s%%", v)})
+			switch k {
+			case "id", "tenant_id", "workflow_id", "status":
+				query = query.Where(squirrel.Eq{k: v})
+			default:
+				query = query.Where(squirrel.ILike{k: fmt.Sprintf("%%%s%%", v)})
+			}
 		}
 	}
 
@@ -125,7 +133,12 @@ func (r *executionRepository) List(ctx context.Context, limit, offset uint64, fi
 	countQ := r.sq.Select("count(*)").From((&model.Execution{}).Tablename())
 	if len(filters) > 0 {
 		for k, v := range filters {
-			countQ = countQ.Where(squirrel.ILike{k: fmt.Sprintf("%%%s%%", v)})
+			switch k {
+			case "id", "tenant_id", "workflow_id", "status":
+				countQ = countQ.Where(squirrel.Eq{k: v})
+			default:
+				countQ = countQ.Where(squirrel.ILike{k: fmt.Sprintf("%%%s%%", v)})
+			}
 		}
 	}
 
@@ -144,6 +157,7 @@ func (r *executionRepository) List(ctx context.Context, limit, offset uint64, fi
 
 func (r *executionRepository) Update(ctx context.Context, id string, currentVersion int, data map[string]any) error {
 	data["version"] = currentVersion + 1
+	data["updated_at"] = squirrel.Expr("NOW()")
 
 	sqlQuery, args, err := r.sq.Update((&model.Execution{}).Tablename()).
 		SetMap(data).
@@ -190,4 +204,47 @@ func (r *executionRepository) AcquireForWorker(ctx context.Context, limit int) (
 	}
 
 	return results, nil
+}
+
+func (r *executionRepository) AcquireByIDForWorker(ctx context.Context, id string) (*model.Execution, error) {
+	query, args, err := r.sq.Select((&model.Execution{}).Columns()...).
+		From((&model.Execution{}).Tablename()).
+		Where(squirrel.Eq{"id": id}).
+		Where(squirrel.Eq{"status": "PENDING"}).
+		Suffix("FOR UPDATE SKIP LOCKED").ToSql()
+	if err != nil {
+		return nil, errorx.NewError(errorx.ErrTypeInternal, "failed to build acquire query", err)
+	}
+
+	rows, err := r.getDB(ctx).Query(ctx, query, args...)
+	if err != nil {
+		return nil, errorx.DbError(err, "failed to acquire execution by ID for worker")
+	}
+	defer rows.Close()
+
+	res, err := pgx.CollectOneRow(rows, pgx.RowToAddrOfStructByName[model.Execution])
+	if err != nil {
+		return nil, errorx.DbError(err, err.Error())
+	}
+
+	return res, nil
+}
+
+func (r *executionRepository) RecoverStuckJobs(ctx context.Context, timeout time.Duration) (int64, error) {
+	query, args, err := r.sq.Update((&model.Execution{}).Tablename()).
+		Set("status", "PENDING").
+		Set("updated_at", squirrel.Expr("NOW()")).
+		Where(squirrel.Eq{"status": "RUNNING"}).
+		Where(squirrel.Expr("updated_at < NOW() - ? * INTERVAL '1 second'", int64(timeout.Seconds()))).
+		ToSql()
+	if err != nil {
+		return 0, errorx.NewError(errorx.ErrTypeInternal, "failed to build recover query", err)
+	}
+
+	res, err := r.getDB(ctx).Exec(ctx, query, args...)
+	if err != nil {
+		return 0, errorx.DbError(err, "failed to recover stuck jobs")
+	}
+
+	return res.RowsAffected(), nil
 }

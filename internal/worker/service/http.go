@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"strings"
@@ -40,6 +42,15 @@ func (a *HTTPAction) Execute(ctx context.Context, params map[string]any) (map[st
 				req.Header.Set(k, val)
 			}
 		}
+	}
+
+	execID, _ := params["_execution_id"].(string)
+	stepID, _ := params["_step_id"].(string)
+	if execID != "" && stepID != "" {
+		h := sha256.New()
+		h.Write([]byte(execID + stepID))
+		idempotencyKey := hex.EncodeToString(h.Sum(nil))
+		req.Header.Set("Idempotency-Key", idempotencyKey)
 	}
 
 	resp, err := a.client.Do(req)

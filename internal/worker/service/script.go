@@ -36,10 +36,10 @@ func (s *ScriptAction) Execute(ctx context.Context, params map[string]any) (map[
 	case "python3":
 		imageName = "python:3.10-slim"
 		cmd = []string{"python", "-c", scriptCode}
-	case "node":
+	case "javascript":
 		imageName = "node:18-alpine"
 		cmd = []string{"node", "-e", scriptCode}
-	case "bash":
+	case "shell":
 		imageName = "ubuntu:22.04"
 		cmd = []string{"bash", "-c", scriptCode}
 	case "go":

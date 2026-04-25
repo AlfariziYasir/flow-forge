@@ -62,6 +62,17 @@ func (m *mockExecRepo) AcquireForWorker(ctx context.Context, limit int) ([]*mode
 	args := m.Called(ctx, limit)
 	return args.Get(0).([]*model.Execution), args.Error(1)
 }
+func (m *mockExecRepo) AcquireByIDForWorker(ctx context.Context, id string) (*model.Execution, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*model.Execution), args.Error(1)
+}
+func (m *mockExecRepo) RecoverStuckJobs(ctx context.Context, timeout time.Duration) (int64, error) {
+	args := m.Called(ctx, timeout)
+	return int64(args.Int(0)), args.Error(1)
+}
 
 type mockStepRepo struct {
 	mock.Mock
@@ -88,9 +99,12 @@ func (m *mockStepRepo) List(ctx context.Context, executionID string, limit, offs
 	args := m.Called(ctx, executionID, limit, offset)
 	return args.Get(0).([]*model.StepExecution), args.Int(1), args.Error(2)
 }
-func (m *mockStepRepo) ClaimPendingSteps(ctx context.Context, executionID string, limit int) ([]*model.StepExecution, error) {
-	args := m.Called(ctx, executionID, limit)
-	return args.Get(0).([]*model.StepExecution), args.Error(1)
+func (m *mockStepRepo) GetByExecutionAndStep(ctx context.Context, execID, stepID string) (*model.StepExecution, error) {
+	args := m.Called(ctx, execID, stepID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*model.StepExecution), args.Error(1)
 }
 
 type mockTrx struct {
@@ -107,7 +121,7 @@ func (m *mockTrx) Rollback(ctx context.Context) error { return m.Called(ctx).Err
 func TestEngine_SimpleWorkflow_Success(t *testing.T) {
 	eRepo := new(mockExecRepo)
 	sRepo := new(mockStepRepo)
-	uow := new(mockTrx)
+	trx := new(mockTrx)
 	l := logger.NewNop()
 	broadcaster := new(MockBroadcaster)
 
@@ -115,7 +129,7 @@ func TestEngine_SimpleWorkflow_Success(t *testing.T) {
 	mockAction := new(MockAction)
 	registry.Registry("HTTP", mockAction)
 
-	engine := NewExecutionEngine(eRepo, sRepo, uow, l, broadcaster, 5*time.Minute)
+	engine := NewExecutionEngine(eRepo, sRepo, trx, l, broadcaster, 5*time.Minute)
 	// Override registry for testing
 	engine.registry = registry
 
@@ -131,9 +145,11 @@ func TestEngine_SimpleWorkflow_Success(t *testing.T) {
 	// Mock expectations
 	mockAction.On("Execute", mock.Anything, mock.Anything).Return(map[string]any{"data": "ok"}, nil)
 
-	sRepo.On("ListByExecution", mock.Anything, "exec-1").Return([]*model.StepExecution{
-		{ID: "se-1", StepID: "step-1"},
+	sRepo.On("GetByExecutionAndStep", mock.Anything, "exec-1", "step-1").Return(&model.StepExecution{
+		ID: "se-1", StepID: "step-1",
 	}, nil).Maybe()
+
+	sRepo.On("ListByExecution", mock.Anything, "exec-1").Return([]*model.StepExecution{}, nil).Maybe()
 
 	sRepo.On("Update", mock.Anything, "se-1", mock.Anything).Return(nil).Maybe()
 
@@ -155,7 +171,7 @@ func TestEngine_SimpleWorkflow_Success(t *testing.T) {
 func TestEngine_RetryWithBackoff(t *testing.T) {
 	eRepo := new(mockExecRepo)
 	sRepo := new(mockStepRepo)
-	uow := new(mockTrx)
+	trx := new(mockTrx)
 	l := logger.NewNop()
 	broadcaster := new(MockBroadcaster)
 
@@ -163,7 +179,7 @@ func TestEngine_RetryWithBackoff(t *testing.T) {
 	mockAction := new(MockAction)
 	registry.Registry("HTTP", mockAction)
 
-	engine := NewExecutionEngine(eRepo, sRepo, uow, l, broadcaster, 5*time.Minute)
+	engine := NewExecutionEngine(eRepo, sRepo, trx, l, broadcaster, 5*time.Minute)
 	engine.registry = registry
 
 	workflow := &model.Workflow{
@@ -180,9 +196,10 @@ func TestEngine_RetryWithBackoff(t *testing.T) {
 	mockAction.On("Execute", mock.Anything, mock.Anything).Return(map[string]any{"data": "ok"}, nil).Once()
 
 	sRepo.On("Update", mock.Anything, "se-1", mock.Anything).Return(nil).Maybe()
-	sRepo.On("ListByExecution", mock.Anything, "exec-retry").Return([]*model.StepExecution{
-		{ID: "se-1", StepID: "step-1"},
+	sRepo.On("GetByExecutionAndStep", mock.Anything, "exec-retry", "step-1").Return(&model.StepExecution{
+		ID: "se-1", StepID: "step-1",
 	}, nil).Maybe()
+	sRepo.On("ListByExecution", mock.Anything, "exec-retry").Return([]*model.StepExecution{}, nil).Maybe()
 	eRepo.On("Update", mock.Anything, "exec-retry", mock.Anything, mock.Anything).Return(nil)
 
 	// Broadcaster expectations:
@@ -203,7 +220,7 @@ func TestEngine_RetryWithBackoff(t *testing.T) {
 func TestEngine_MaxRetries_Exhausted(t *testing.T) {
 	eRepo := new(mockExecRepo)
 	sRepo := new(mockStepRepo)
-	uow := new(mockTrx)
+	trx := new(mockTrx)
 	l := logger.NewNop()
 	broadcaster := new(MockBroadcaster)
 
@@ -211,7 +228,7 @@ func TestEngine_MaxRetries_Exhausted(t *testing.T) {
 	mockAction := new(MockAction)
 	registry.Registry("HTTP", mockAction)
 
-	engine := NewExecutionEngine(eRepo, sRepo, uow, l, broadcaster, 5*time.Minute)
+	engine := NewExecutionEngine(eRepo, sRepo, trx, l, broadcaster, 5*time.Minute)
 	engine.registry = registry
 
 	workflow := &model.Workflow{
@@ -227,9 +244,10 @@ func TestEngine_MaxRetries_Exhausted(t *testing.T) {
 	mockAction.On("Execute", mock.Anything, mock.Anything).Return(nil, fmt.Errorf("persistent failure")).Times(2)
 
 	sRepo.On("Update", mock.Anything, "se-1", mock.Anything).Return(nil).Maybe()
-	sRepo.On("ListByExecution", mock.Anything, "exec-exhausted").Return([]*model.StepExecution{
-		{ID: "se-1", StepID: "step-1"},
+	sRepo.On("GetByExecutionAndStep", mock.Anything, "exec-exhausted", "step-1").Return(&model.StepExecution{
+		ID: "se-1", StepID: "step-1",
 	}, nil).Maybe()
+	sRepo.On("ListByExecution", mock.Anything, "exec-exhausted").Return([]*model.StepExecution{}, nil).Maybe()
 	eRepo.On("Update", mock.Anything, "exec-exhausted", mock.Anything, mock.Anything).Return(nil)
 
 	// Broadcaster expectations:
@@ -250,7 +268,7 @@ func TestEngine_MaxRetries_Exhausted(t *testing.T) {
 func TestEngine_ConditionalSkip(t *testing.T) {
 	eRepo := new(mockExecRepo)
 	sRepo := new(mockStepRepo)
-	uow := new(mockTrx)
+	trx := new(mockTrx)
 	l := logger.NewNop()
 	broadcaster := new(MockBroadcaster)
 
@@ -258,7 +276,7 @@ func TestEngine_ConditionalSkip(t *testing.T) {
 	mockAction := new(MockAction)
 	registry.Registry("HTTP", mockAction)
 
-	engine := NewExecutionEngine(eRepo, sRepo, uow, l, broadcaster, 5*time.Minute)
+	engine := NewExecutionEngine(eRepo, sRepo, trx, l, broadcaster, 5*time.Minute)
 	engine.registry = registry
 
 	workflow := &model.Workflow{
@@ -278,10 +296,13 @@ func TestEngine_ConditionalSkip(t *testing.T) {
 	})).Return(map[string]any{"condition_met": false}, nil).Once()
 
 	sRepo.On("Update", mock.Anything, "se-1", mock.Anything).Return(nil).Maybe()
-	sRepo.On("ListByExecution", mock.Anything, "exec-skip").Return([]*model.StepExecution{
-		{ID: "se-1", StepID: "step-1"},
-		{ID: "se-2", StepID: "step-2"},
+	sRepo.On("GetByExecutionAndStep", mock.Anything, "exec-skip", "step-1").Return(&model.StepExecution{
+		ID: "se-1", StepID: "step-1",
 	}, nil).Maybe()
+	sRepo.On("GetByExecutionAndStep", mock.Anything, "exec-skip", "step-2").Return(&model.StepExecution{
+		ID: "se-2", StepID: "step-2",
+	}, nil).Maybe()
+	sRepo.On("ListByExecution", mock.Anything, "exec-skip").Return([]*model.StepExecution{}, nil).Maybe()
 	eRepo.On("Update", mock.Anything, "exec-skip", mock.Anything, mock.Anything).Return(nil)
 
 	// Broadcaster: 1x Running, 1x Success (for step 1)
@@ -296,7 +317,7 @@ func TestEngine_ConditionalSkip(t *testing.T) {
 func TestEngine_ParallelExecution(t *testing.T) {
 	eRepo := new(mockExecRepo)
 	sRepo := new(mockStepRepo)
-	uow := new(mockTrx)
+	trx := new(mockTrx)
 	l := logger.NewNop()
 	broadcaster := new(MockBroadcaster)
 
@@ -304,7 +325,7 @@ func TestEngine_ParallelExecution(t *testing.T) {
 	mockAction := new(MockAction)
 	registry.Registry("WAIT", mockAction)
 
-	engine := NewExecutionEngine(eRepo, sRepo, uow, l, broadcaster, 5*time.Minute)
+	engine := NewExecutionEngine(eRepo, sRepo, trx, l, broadcaster, 5*time.Minute)
 	engine.registry = registry
 
 	workflow := &model.Workflow{
@@ -322,10 +343,13 @@ func TestEngine_ParallelExecution(t *testing.T) {
 	mockAction.On("Execute", mock.Anything, mock.Anything).Return(nil, nil).Twice()
 
 	sRepo.On("Update", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-	sRepo.On("ListByExecution", mock.Anything, "exec-parallel").Return([]*model.StepExecution{
-		{ID: "se-1", StepID: "step-1"},
-		{ID: "se-2", StepID: "step-2"},
+	sRepo.On("GetByExecutionAndStep", mock.Anything, "exec-parallel", "step-1").Return(&model.StepExecution{
+		ID: "se-1", StepID: "step-1",
 	}, nil).Maybe()
+	sRepo.On("GetByExecutionAndStep", mock.Anything, "exec-parallel", "step-2").Return(&model.StepExecution{
+		ID: "se-2", StepID: "step-2",
+	}, nil).Maybe()
+	sRepo.On("ListByExecution", mock.Anything, "exec-parallel").Return([]*model.StepExecution{}, nil).Maybe()
 	eRepo.On("Update", mock.Anything, "exec-parallel", mock.Anything, mock.Anything).Return(nil)
 
 	// Broadcaster: (1x Running + 1x Success) * 2 steps = 4 calls

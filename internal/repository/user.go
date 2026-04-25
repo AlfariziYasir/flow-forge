@@ -25,7 +25,7 @@ type userRepository struct {
 	sq squirrel.StatementBuilderType
 }
 
-func NewRepository(db postgres.PgxExecutor) UserRepository {
+func NewUserRepository(db postgres.PgxExecutor) UserRepository {
 	return &userRepository{
 		db: db,
 		sq: squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar),
@@ -33,11 +33,14 @@ func NewRepository(db postgres.PgxExecutor) UserRepository {
 }
 
 func (r *userRepository) Create(ctx context.Context, user *model.User) error {
-	query, args, _ := r.sq.
+	query, args, err := r.sq.
 		Insert(user.Tablename()).
 		Columns(user.Columns()...).
 		Values(user.Values()...).
 		ToSql()
+	if err != nil {
+		return errorx.NewError(errorx.ErrTypeInternal, "failed to build create query", err)
+	}
 
 	res, err := r.db.Exec(ctx, query, args...)
 	if err != nil {
@@ -61,7 +64,10 @@ func (r *userRepository) Get(ctx context.Context, filters map[string]any, status
 		query = query.Where(squirrel.Expr("is_active is true"))
 	}
 
-	sqlQuery, args, _ := query.ToSql()
+	sqlQuery, args, err := query.ToSql()
+	if err != nil {
+		return errorx.NewError(errorx.ErrTypeInternal, "failed to build get query", err)
+	}
 	rows, err := r.db.Query(ctx, sqlQuery, args...)
 	if err != nil {
 		return errorx.DbError(err, err.Error())
@@ -82,7 +88,12 @@ func (r *userRepository) List(ctx context.Context, limit, offset uint64, filters
 	query := r.sq.Select((&model.User{}).Columns()...).From((&model.User{}).Tablename())
 	if len(filters) > 0 {
 		for k, v := range filters {
-			query = query.Where(squirrel.ILike{k: fmt.Sprintf("%%%s%%", v)})
+			switch k {
+			case "id", "tenant_id":
+				query = query.Where(squirrel.Eq{k: v})
+			default:
+				query = query.Where(squirrel.ILike{k: fmt.Sprintf("%%%s%%", v)})
+			}
 		}
 	}
 
@@ -109,7 +120,12 @@ func (r *userRepository) List(ctx context.Context, limit, offset uint64, filters
 	query2 := r.sq.Select("count(*)").From((&model.User{}).Tablename())
 	if len(filters) > 0 {
 		for k, v := range filters {
-			query2 = query2.Where(squirrel.ILike{k: fmt.Sprintf("%%%s%%", v)})
+			switch k {
+			case "id", "tenant_id":
+				query2 = query2.Where(squirrel.Eq{k: v})
+			default:
+				query2 = query2.Where(squirrel.ILike{k: fmt.Sprintf("%%%s%%", v)})
+			}
 		}
 	}
 
