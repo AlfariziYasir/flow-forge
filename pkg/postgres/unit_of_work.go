@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"flowforge/pkg/errorx"
+	"flowforge/pkg/jwt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -32,6 +33,15 @@ func (u *unitOfWork) Begin(ctx context.Context) (context.Context, error) {
 	tx, err := u.pool.Begin(ctx)
 	if err != nil {
 		return nil, errorx.DbError(err, "failed to begin transaction")
+	}
+
+	tenantID := jwt.GetTenant(ctx)
+	if tenantID != "" {
+		_, err = tx.Exec(ctx, "SELECT set_config('app.current_tenant_id', $1, true)", tenantID)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return nil, errorx.DbError(err, "failed to set tenant context")
+		}
 	}
 
 	return context.WithValue(ctx, TrxKey{}, tx), nil

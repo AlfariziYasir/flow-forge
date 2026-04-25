@@ -18,8 +18,6 @@ func RateLimiter(log *logger.Logger, cache redis.Cache, tenantLimit, tenantRate 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
-
-			// 1. Global Rate Limit
 			globalKey := "rate_limit:global"
 			allowed, err := cache.Allow(ctx, globalKey, globalLimit, globalRate)
 			if err != nil {
@@ -30,7 +28,6 @@ func RateLimiter(log *logger.Logger, cache redis.Cache, tenantLimit, tenantRate 
 				return
 			}
 
-			// 2. Scoped Rate Limit (Tenant or IP)
 			var scopeKey string
 			tenantID := jwt.GetTenant(ctx)
 			if tenantID != "" {

@@ -10,13 +10,14 @@ import (
 	"flowforge/pkg/logger"
 	"flowforge/pkg/postgres"
 	"flowforge/pkg/redis"
+
 	"go.uber.org/zap"
 )
 
 type JobPoller struct {
 	execRepo   repository.ExecutionRepository
 	workRepo   repository.WorkflowRepository
-	uow        postgres.Trx
+	trx        postgres.Trx
 	cache      redis.Cache
 	engine     service.ExecutionEngine
 	l          *logger.Logger
@@ -26,7 +27,7 @@ type JobPoller struct {
 func NewJobPoller(
 	execRepo repository.ExecutionRepository,
 	workRepo repository.WorkflowRepository,
-	uow postgres.Trx,
+	trx postgres.Trx,
 	cache redis.Cache,
 	engine service.ExecutionEngine,
 	l *logger.Logger,
@@ -35,7 +36,7 @@ func NewJobPoller(
 	return &JobPoller{
 		execRepo:   execRepo,
 		workRepo:   workRepo,
-		uow:        uow,
+		trx:        trx,
 		cache:      cache,
 		engine:     engine,
 		l:          l,
@@ -45,8 +46,7 @@ func NewJobPoller(
 
 func (p *JobPoller) Start(ctx context.Context) {
 	p.l.Info("starting job poller", zap.Duration("period", p.pollPeriod))
-	
-	// DB Polling loop
+
 	go func() {
 		ticker := time.NewTicker(p.pollPeriod)
 		defer ticker.Stop()
@@ -60,7 +60,20 @@ func (p *JobPoller) Start(ctx context.Context) {
 		}
 	}()
 
-	// Redis Polling loop
+	go func() {
+		// Recover stuck jobs every 5 minutes
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				p.recoverStuckJobs(ctx)
+			}
+		}
+	}()
+
 	if p.cache != nil {
 		go p.redisLoop(ctx)
 	}
@@ -77,10 +90,9 @@ func (p *JobPoller) redisLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
-			// BLPop with 5s timeout to allow ctx.Done check
 			res, err := p.cache.BLPop(ctx, 5*time.Second, queueKey)
 			if err != nil {
-				if err.Error() == "redis: nil" { // Go-redis Nil error for timeout
+				if err.Error() == "redis: nil" {
 					continue
 				}
 				p.l.Warn("redis blpop error", zap.Error(err))
@@ -98,27 +110,21 @@ func (p *JobPoller) redisLoop(ctx context.Context) {
 }
 
 func (p *JobPoller) processExecutionByID(ctx context.Context, id string) {
-	// Fetch execution from DB and mark as RUNNING if still PENDING
-	txCtx, err := p.uow.Begin(ctx)
+	txCtx, err := p.trx.Begin(ctx)
 	if err != nil {
 		p.l.Error("failed to begin transaction for redis job", zap.Error(err))
 		return
 	}
-	defer p.uow.Rollback(txCtx)
+	defer p.trx.Rollback(txCtx)
 
-	var exe model.Execution
-	err = p.execRepo.Get(txCtx, map[string]any{"id": id}, &exe)
+	exe, err := p.execRepo.AcquireByIDForWorker(txCtx, id)
 	if err != nil {
-		p.l.Error("failed to fetch execution from redis job", zap.Error(err), zap.String("id", id))
+		p.l.Debug("failed to acquire execution for redis job (already claimed or not pending)", zap.String("id", id), zap.Error(err))
 		return
 	}
 
-	if exe.Status != string(model.StatusExecutionPending) {
-		return // already being processed or finished
-	}
-
 	err = p.execRepo.Update(txCtx, exe.ID, exe.Version, map[string]any{
-		"status": "RUNNING",
+		"status": string(model.StatusExecutionRunning),
 	})
 	if err != nil {
 		p.l.Error("failed to update execution to RUNNING for redis job", zap.Error(err))
@@ -126,12 +132,12 @@ func (p *JobPoller) processExecutionByID(ctx context.Context, id string) {
 	}
 	exe.Version++
 
-	if err := p.uow.Commit(txCtx); err != nil {
+	if err := p.trx.Commit(txCtx); err != nil {
 		p.l.Error("failed to commit redis job acquisition", zap.Error(err))
 		return
 	}
 
-	p.executeOne(ctx, &exe)
+	p.executeOne(ctx, exe)
 }
 
 func (p *JobPoller) executeOne(ctx context.Context, exe *model.Execution) {
@@ -145,18 +151,17 @@ func (p *JobPoller) executeOne(ctx context.Context, exe *model.Execution) {
 		return
 	}
 
-	go p.engine.RunExecution(context.Background(), exe, &workflow)
+	go p.engine.RunExecution(ctx, exe, &workflow)
 }
 
 func (p *JobPoller) poll(ctx context.Context) {
-	txCtx, err := p.uow.Begin(ctx)
+	txCtx, err := p.trx.Begin(ctx)
 	if err != nil {
 		p.l.Error("failed to begin transaction for polling", zap.Error(err))
 		return
 	}
-	defer p.uow.Rollback(txCtx) // automatically ignored if committed
+	defer p.trx.Rollback(txCtx)
 
-	// Acquire up to 5 executions per tick globally (tenant="" skips where tenant_id)
 	executions, err := p.execRepo.AcquireForWorker(txCtx, 5)
 	if err != nil {
 		p.l.Error("failed to acquire executions", zap.Error(err))
@@ -164,11 +169,9 @@ func (p *JobPoller) poll(ctx context.Context) {
 	}
 
 	if len(executions) == 0 {
-		return // nothing to do
+		return
 	}
 
-	// Update statuses to RUNNING to lock them out completely from other potential txs
-	// though SKIP LOCKED already does that locally
 	for _, exe := range executions {
 		err = p.execRepo.Update(txCtx, exe.ID, exe.Version, map[string]any{
 			"status": "RUNNING",
@@ -180,26 +183,35 @@ func (p *JobPoller) poll(ctx context.Context) {
 		exe.Version++
 	}
 
-	if err := p.uow.Commit(txCtx); err != nil {
+	if err := p.trx.Commit(txCtx); err != nil {
 		p.l.Error("failed to commit acquired executions", zap.Error(err))
 		return
 	}
 
-	// Now that they are committed as RUNNING, we can spawn goroutines to execute them
 	for _, exe := range executions {
-		// Fetch full workflow
+
 		var workflow model.Workflow
 		err = p.workRepo.Get(ctx, map[string]any{"id": exe.WorkflowID}, &workflow)
 		if err != nil {
 			p.l.Error("failed to fetch workflow for execution", zap.Error(err), zap.String("workflow_id", exe.WorkflowID))
-			// mark execution as failed
+
 			p.execRepo.Update(ctx, exe.ID, exe.Version+1, map[string]any{
 				"status": "FAILED",
 			})
 			continue
 		}
 
-		// Execute asynchronously
-		go p.engine.RunExecution(context.Background(), exe, &workflow)
+		go p.engine.RunExecution(ctx, exe, &workflow)
+	}
+}
+
+func (p *JobPoller) recoverStuckJobs(ctx context.Context) {
+	count, err := p.execRepo.RecoverStuckJobs(ctx, 15*time.Minute)
+	if err != nil {
+		p.l.Error("failed to recover stuck jobs", zap.Error(err))
+		return
+	}
+	if count > 0 {
+		p.l.Info("recovered stuck jobs", zap.Int64("count", count))
 	}
 }

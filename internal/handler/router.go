@@ -80,7 +80,6 @@ func NewRouter(
 			r.Post("/analyze", aiHandler.AnalyzeFailure)
 		})
 
-		// Admin only routes
 		r.Group(func(r chi.Router) {
 			r.Use(RBACMiddleware("admin"))
 

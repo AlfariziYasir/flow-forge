@@ -60,7 +60,7 @@ func main() {
 	broadcaster.Init(cache, l.GetZapLogger())
 
 	// Repositories
-	userRepo := repository.NewRepository(pool)
+	userRepo := repository.NewUserRepository(pool)
 	tenantRepo := repository.NewTenantRepository(pool)
 	wfRepo := repository.NewWorkflowRepository(pool)
 	execRepo := repository.NewExecutionRepository(pool)

@@ -138,7 +138,12 @@ func (r *workflowRepository) List(ctx context.Context, limit, offset uint64, fil
 
 	if len(filters) > 0 {
 		for k, v := range filters {
-			base = base.Where(squirrel.ILike{k: fmt.Sprintf("%%%s%%", v)})
+			switch k {
+			case "id", "tenant_id":
+				base = base.Where(squirrel.Eq{k: v})
+			default:
+				base = base.Where(squirrel.ILike{k: fmt.Sprintf("%%%s%%", v)})
+			}
 		}
 	}
 
@@ -169,7 +174,12 @@ func (r *workflowRepository) List(ctx context.Context, limit, offset uint64, fil
 
 	if len(filters) > 0 {
 		for k, v := range filters {
-			countQ = countQ.Where(squirrel.ILike{k: fmt.Sprintf("%%%s%%", v)})
+			switch k {
+			case "id", "tenant_id":
+				countQ = countQ.Where(squirrel.Eq{k: v})
+			default:
+				countQ = countQ.Where(squirrel.ILike{k: fmt.Sprintf("%%%s%%", v)})
+			}
 		}
 	}
 
@@ -212,10 +222,14 @@ func (r *workflowRepository) ListVersions(ctx context.Context, tenantID, name st
 }
 
 func (r *workflowRepository) Update(ctx context.Context, id string, data map[string]any) error {
-	query, args, _ := r.sq.Update((&model.Workflow{}).Tablename()).
+	data["updated_at"] = squirrel.Expr("NOW()")
+	query, args, err := r.sq.Update((&model.Workflow{}).Tablename()).
 		SetMap(data).
 		Where(squirrel.Eq{"id": id}).
 		ToSql()
+	if err != nil {
+		return errorx.NewError(errorx.ErrTypeInternal, "failed to build update query", err)
+	}
 
 	res, err := r.getDB(ctx).Exec(ctx, query, args...)
 	if err != nil {

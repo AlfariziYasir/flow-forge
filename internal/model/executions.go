@@ -12,6 +12,8 @@ const (
 	StatusExecutionRunning   = "RUNNING"
 	StatusExecutionCancelled = "CANCELLED"
 	StatusExecutionSkipped   = "SKIPPED"
+	StatusExecutionSuspended = "SUSPENDED"
+	StatusExecutionCompensating = "COMPENSATING"
 )
 
 type Execution struct {
@@ -24,6 +26,7 @@ type Execution struct {
 	StartedAt   *time.Time `db:"started_at"`
 	CompletedAt *time.Time `db:"completed_at"`
 	CreatedAt   time.Time  `db:"created_at"`
+	UpdatedAt   time.Time  `db:"updated_at"`
 }
 
 func (t *Execution) Tablename() string {
@@ -34,7 +37,7 @@ func (t *Execution) Columns() []string {
 	return []string{
 		"id", "tenant_id", "workflow_id",
 		"status", "trigger_type", "version",
-		"started_at", "completed_at", "created_at",
+		"started_at", "completed_at", "created_at", "updated_at",
 	}
 }
 
@@ -42,7 +45,7 @@ func (t *Execution) Values() []any {
 	return []any{
 		t.ID, t.TenantID, t.WorkflowID,
 		t.Status, t.TriggerType, t.Version,
-		t.StartedAt, t.CompletedAt, t.CreatedAt,
+		t.StartedAt, t.CompletedAt, t.CreatedAt, t.UpdatedAt,
 	}
 }
 
@@ -63,6 +66,7 @@ type ExecutionResponse struct {
 	StartedAt   *time.Time `json:"started_at,omitempty"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 type ListExecutionRequest struct {

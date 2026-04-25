@@ -85,6 +85,19 @@ func (m *MockExecutionRepository) AcquireForWorker(ctx context.Context, limit in
 	return args.Get(0).([]*model.Execution), args.Error(1)
 }
 
+func (m *MockExecutionRepository) AcquireByIDForWorker(ctx context.Context, id string) (*model.Execution, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*model.Execution), args.Error(1)
+}
+
+func (m *MockExecutionRepository) RecoverStuckJobs(ctx context.Context, timeout time.Duration) (int64, error) {
+	args := m.Called(ctx, timeout)
+	return int64(args.Int(0)), args.Error(1)
+}
+
 // MockStepExecutionRepository
 type MockStepExecutionRepository struct {
 	mock.Mock
@@ -116,6 +129,14 @@ func (m *MockStepExecutionRepository) List(ctx context.Context, executionID stri
 func (m *MockStepExecutionRepository) Update(ctx context.Context, id string, data map[string]any) error {
 	args := m.Called(ctx, id, data)
 	return args.Error(0)
+}
+
+func (m *MockStepExecutionRepository) GetByExecutionAndStep(ctx context.Context, execID, stepID string) (*model.StepExecution, error) {
+	args := m.Called(ctx, execID, stepID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*model.StepExecution), args.Error(1)
 }
 
 // MockUserRepository
