@@ -32,11 +32,14 @@ func NewTenantRepository(db postgres.PgxExecutor) TenantRepository {
 }
 
 func (r *tenantRepository) Create(ctx context.Context, tenant *model.Tenant) error {
-	query, args, _ := r.sq.
+	query, args, err := r.sq.
 		Insert(tenant.Tablename()).
 		Columns(tenant.Columns()...).
 		Values(tenant.Values()...).
 		ToSql()
+	if err != nil {
+		return errorx.NewError(errorx.ErrTypeInternal, "failed to build create query", err)
+	}
 
 	res, err := r.db.Exec(ctx, query, args...)
 	if err != nil {
@@ -60,7 +63,10 @@ func (r *tenantRepository) Get(ctx context.Context, filters map[string]any, stat
 		query = query.Where(squirrel.Expr("is_active is true"))
 	}
 
-	sqlQuery, args, _ := query.ToSql()
+	sqlQuery, args, err := query.ToSql()
+	if err != nil {
+		return errorx.NewError(errorx.ErrTypeInternal, "failed to build get query", err)
+	}
 	rows, err := r.db.Query(ctx, sqlQuery, args...)
 	if err != nil {
 		return errorx.DbError(err, err.Error())
@@ -81,7 +87,12 @@ func (r *tenantRepository) List(ctx context.Context, limit, offset uint64, filte
 	query := r.sq.Select((&model.Tenant{}).Columns()...).From((&model.Tenant{}).Tablename())
 	if len(filters) > 0 {
 		for k, v := range filters {
-			query = query.Where(squirrel.ILike{k: fmt.Sprintf("%%%s%%", v)})
+			switch k {
+			case "id":
+				query = query.Where(squirrel.Eq{k: v})
+			default:
+				query = query.Where(squirrel.ILike{k: fmt.Sprintf("%%%s%%", v)})
+			}
 		}
 	}
 
@@ -108,7 +119,12 @@ func (r *tenantRepository) List(ctx context.Context, limit, offset uint64, filte
 	query2 := r.sq.Select("count(*)").From((&model.Tenant{}).Tablename())
 	if len(filters) > 0 {
 		for k, v := range filters {
-			query2 = query2.Where(squirrel.ILike{k: fmt.Sprintf("%%%s%%", v)})
+			switch k {
+			case "id":
+				query2 = query2.Where(squirrel.Eq{k: v})
+			default:
+				query2 = query2.Where(squirrel.ILike{k: fmt.Sprintf("%%%s%%", v)})
+			}
 		}
 	}
 

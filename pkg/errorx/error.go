@@ -12,6 +12,8 @@ const (
 	ErrTypeUnauthorized ErrorType = "UNAUTHORIZED"
 )
 
+var ErrSuspendExecution = fmt.Errorf("execution suspended pending external event")
+
 type AppError struct {
 	Type    ErrorType
 	Message string
