@@ -193,6 +193,7 @@ func (s *executionService) Retry(ctx context.Context, tenantID, executionID stri
 			StepID:      stepDef.ID,
 			Action:      stepDef.Action,
 			Status:      string(model.StatusExecutionPending),
+			Version:     1,
 			RetryCount:  0,
 		}
 		err = s.sRepo.Create(txCtx, stepRec)
@@ -226,7 +227,7 @@ func (s *executionService) Cancel(ctx context.Context, tenantID, executionID str
 		return errorx.NewError(errorx.ErrTypeConflict, "execution is not in running state", nil)
 	}
 
-	err = s.eRepo.Update(ctx, exec.ID, exec.Version, map[string]any{"tenant_id": tenantID, "status": model.StatusExecutionCancelled})
+	err = s.eRepo.Update(ctx, exec.ID, exec.Version, map[string]any{"status": model.StatusExecutionCancelled})
 	if err != nil {
 		s.log.Error("failed to update execution", zap.Error(err))
 		return err

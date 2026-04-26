@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type HTTPAction struct {
@@ -15,7 +17,9 @@ type HTTPAction struct {
 
 func NewHTTPAction() *HTTPAction {
 	return &HTTPAction{
-		client: &http.Client{},
+		client: &http.Client{
+			Timeout: 30 * time.Second,
+		},
 	}
 }
 
@@ -25,6 +29,9 @@ func (a *HTTPAction) Execute(ctx context.Context, params map[string]any) (map[st
 		method = "GET"
 	}
 	url, _ := params["url"].(string)
+	if url == "" {
+		return nil, fmt.Errorf("missing 'url' parameter")
+	}
 
 	var bodyReader io.Reader
 	if body, ok := params["body"].(string); ok && body != "" {

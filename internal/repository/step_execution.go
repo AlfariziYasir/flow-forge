@@ -16,7 +16,7 @@ type StepExecutionRepository interface {
 	Get(ctx context.Context, filters map[string]any, step *model.StepExecution) error
 	ListByExecution(ctx context.Context, executionID string) ([]*model.StepExecution, error)
 	List(ctx context.Context, executionID string, limit, offset uint64) ([]*model.StepExecution, int, error)
-	Update(ctx context.Context, id string, data map[string]any) error
+	Update(ctx context.Context, id string, currentVersion int, data map[string]any) error
 	GetByExecutionAndStep(ctx context.Context, execID, stepID string) (*model.StepExecution, error)
 }
 
@@ -156,10 +156,14 @@ func (r *stepExecutionRepository) List(ctx context.Context, executionID string, 
 	return results, total, nil
 }
 
-func (r *stepExecutionRepository) Update(ctx context.Context, id string, data map[string]any) error {
+func (r *stepExecutionRepository) Update(ctx context.Context, id string, currentVersion int, data map[string]any) error {
+	data["version"] = currentVersion + 1
+	data["updated_at"] = squirrel.Expr("NOW()")
+
 	query, args, err := r.sq.Update((&model.StepExecution{}).Tablename()).
 		SetMap(data).
 		Where(squirrel.Eq{"id": id}).
+		Where(squirrel.Eq{"version": currentVersion}).
 		ToSql()
 	if err != nil {
 		return errorx.NewError(errorx.ErrTypeInternal, "failed to build update status query", err)
@@ -171,11 +175,8 @@ func (r *stepExecutionRepository) Update(ctx context.Context, id string, data ma
 	}
 
 	if res.RowsAffected() == 0 {
-		return errorx.NewError(
-			errorx.ErrTypeValidation,
-			"failed to update step executions: record not found or version conflict (data modified by another process)",
-			pgx.ErrNoRows,
-		)
+		return errorx.NewError(errorx.ErrTypeConflict,
+			"step execution was modified by another request, please re-fetch and retry", nil)
 	}
 
 	return nil

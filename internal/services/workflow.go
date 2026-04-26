@@ -384,6 +384,7 @@ func (s *workflowService) Trigger(ctx context.Context, tenantID, workflowID, tri
 			StepID:      stepDef.ID,
 			Action:      stepDef.Action,
 			Status:      string(model.StatusExecutionPending),
+			Version:     1,
 			RetryCount:  0,
 		}
 		err = s.sRepo.Create(txCtx, stepRec)

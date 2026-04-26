@@ -145,9 +145,11 @@ func (p *JobPoller) executeOne(ctx context.Context, exe *model.Execution) {
 	err := p.workRepo.Get(ctx, map[string]any{"id": exe.WorkflowID}, &workflow)
 	if err != nil {
 		p.l.Error("failed to fetch workflow for execution", zap.Error(err), zap.String("workflow_id", exe.WorkflowID))
-		p.execRepo.Update(ctx, exe.ID, exe.Version+1, map[string]any{
+		if err := p.execRepo.Update(ctx, exe.ID, exe.Version, map[string]any{
 			"status": "FAILED",
-		})
+		}); err != nil {
+			p.l.Error("failed to mark execution as failed", zap.Error(err))
+		}
 		return
 	}
 
@@ -188,16 +190,18 @@ func (p *JobPoller) poll(ctx context.Context) {
 		return
 	}
 
-	for _, exe := range executions {
+for _, exe := range executions {
 
 		var workflow model.Workflow
 		err = p.workRepo.Get(ctx, map[string]any{"id": exe.WorkflowID}, &workflow)
 		if err != nil {
 			p.l.Error("failed to fetch workflow for execution", zap.Error(err), zap.String("workflow_id", exe.WorkflowID))
 
-			p.execRepo.Update(ctx, exe.ID, exe.Version+1, map[string]any{
+			if err := p.execRepo.Update(ctx, exe.ID, exe.Version, map[string]any{
 				"status": "FAILED",
-			})
+			}); err != nil {
+				p.l.Error("failed to mark execution as failed", zap.Error(err))
+			}
 			continue
 		}
 

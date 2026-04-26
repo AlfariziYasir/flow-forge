@@ -126,8 +126,8 @@ func (m *MockStepExecutionRepository) List(ctx context.Context, executionID stri
 	return args.Get(0).([]*model.StepExecution), args.Int(1), args.Error(2)
 }
 
-func (m *MockStepExecutionRepository) Update(ctx context.Context, id string, data map[string]any) error {
-	args := m.Called(ctx, id, data)
+func (m *MockStepExecutionRepository) Update(ctx context.Context, id string, currentVersion int, data map[string]any) error {
+	args := m.Called(ctx, id, currentVersion, data)
 	return args.Error(0)
 }
 

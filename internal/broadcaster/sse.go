@@ -5,6 +5,7 @@ import (
 	"flowforge/pkg/redis"
 	"fmt"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -67,12 +68,13 @@ func (b *SSEBroadcaster) Unregister(tenantID string, clientChan chan []byte) {
 	defer b.mutex.Unlock()
 
 	if consumers, ok := b.tenantClients[tenantID]; ok {
-		delete(consumers, clientChan)
-		close(clientChan)
+		if _, exists := consumers[clientChan]; exists {
+			delete(consumers, clientChan)
+			close(clientChan)
+		}
 
 		if len(consumers) == 0 {
 			delete(b.tenantClients, tenantID)
-			// Stop Redis subscription if no more clients for this tenant
 			if cancel, ok := b.subscriptions[tenantID]; ok {
 				cancel()
 				delete(b.subscriptions, tenantID)
@@ -83,19 +85,44 @@ func (b *SSEBroadcaster) Unregister(tenantID string, clientChan chan []byte) {
 
 func (b *SSEBroadcaster) listenRedis(ctx context.Context, tenantID string) {
 	channel := fmt.Sprintf("flowforge:events:tenant_%s", tenantID)
-	pubsub := b.cache.Subscribe(ctx, channel)
-	defer pubsub.Close()
 
-	ch := pubsub.Channel()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case msg, ok := <-ch:
-			if !ok {
+		default:
+		}
+
+		pubsub := b.cache.Subscribe(ctx, channel)
+		if pubsub == nil {
+			b.log.Error("failed to subscribe to Redis channel", zap.String("tenant_id", tenantID))
+			select {
+			case <-ctx.Done():
 				return
+			case <-time.After(5 * time.Second):
+				continue
 			}
-			b.broadcastLocal(tenantID, []byte(msg.Payload))
+		}
+
+		ch := pubsub.Channel()
+		for {
+			select {
+			case <-ctx.Done():
+				pubsub.Close()
+				return
+			case msg, ok := <-ch:
+				if !ok {
+					pubsub.Close()
+					goto reconnect
+				}
+				b.broadcastLocal(tenantID, []byte(msg.Payload))
+			}
+		}
+	reconnect:
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(1 * time.Second):
 		}
 	}
 }
