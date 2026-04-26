@@ -3,58 +3,67 @@ package handler
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"flowforge/internal/broadcaster"
 	"flowforge/pkg/jwt"
+	"flowforge/pkg/logger"
 )
 
-func SSEHandler(w http.ResponseWriter, r *http.Request) {
-	// Setup headers for SSE
+type SSEHandler struct {
+	log *logger.Logger
+}
+
+func NewSSEHandler(l *logger.Logger) *SSEHandler {
+	return &SSEHandler{log: l}
+}
+
+func (h *SSEHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
-	// Ensure the connection supports flushing
 	flusher, ok := w.(http.Flusher)
 	if !ok {
+		h.log.Error("streaming not supported")
 		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
 		return
 	}
 
-	// Extract tenantID from context (added by authMiddleware)
 	tenantID := jwt.GetTenant(r.Context())
 	if tenantID == "" {
+		h.log.Error("tenant_id missing from context")
 		http.Error(w, "Unauthorized: tenant_id missing", http.StatusUnauthorized)
 		return
 	}
 
-	// Create a channel for this client
-	clientChan := make(chan []byte)
+	clientChan := make(chan []byte, 10)
 
-	// Register this client with the broadcaster
 	b := broadcaster.Get()
 	b.Register(tenantID, clientChan)
 
-	// Ensure cleanup when the client disconnects
 	defer func() {
 		b.Unregister(tenantID, clientChan)
 	}()
 
-	// Send an initial connected message
 	fmt.Fprintf(w, "event: connected\ndata: {\"status\": \"connected\"}\n\n")
 	flusher.Flush()
 
-	// Notify client connection lost
 	ctx := r.Context()
 
 	for {
 		select {
 		case <-ctx.Done():
-			// Client disconnected
 			return
-		case msg := <-clientChan:
+		case msg, ok := <-clientChan:
+			if !ok {
+				return
+			}
 			fmt.Fprintf(w, "data: %s\n\n", msg)
+			flusher.Flush()
+		case <-time.After(30 * time.Second):
+			fmt.Fprintf(w, ": heartbeat\n\n")
 			flusher.Flush()
 		}
 	}

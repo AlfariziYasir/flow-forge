@@ -48,7 +48,7 @@ func main() {
 	}
 	defer pool.Close()
 
-	uow := postgres.NewTransaction(pool)
+	trx := postgres.NewTransaction(pool)
 
 	// Redis (Cache & Queue)
 	cache, err := redis.NewRedisCache(cfg.RedisAddress, cfg.RedisPassword, cfg.RedisDB)
@@ -67,8 +67,8 @@ func main() {
 	sExecRepo := repository.NewStepExecutionRepository(pool)
 
 	// Services
-	wfService := services.NewWorkflowService(wfRepo, execRepo, sExecRepo, uow, cache, l)
-	execService := services.NewExecutionService(execRepo, sExecRepo, wfRepo, l, uow, cache)
+	wfService := services.NewWorkflowService(wfRepo, execRepo, sExecRepo, trx, cache, l)
+	execService := services.NewExecutionService(execRepo, sExecRepo, wfRepo, l, trx, cache)
 	userService := services.NewUserService(userRepo, tenantRepo, l, cfg, cache)
 	tenantService := services.NewTenantService(tenantRepo, l)
 	aiService, err := services.NewAIService(cfg.GeminiAPIKey, l)
@@ -76,7 +76,7 @@ func main() {
 		l.Warn("failed to initialize AI service, AI features will be disabled", zap.Error(err))
 		aiService, _ = services.NewAIService("", l)
 	}
-	
+
 	// Handlers
 	authHandler := handler.NewAuthHandler(userService, l)
 	workflowHandler := handler.NewWorkflowHandler(wfService, l)
@@ -84,6 +84,7 @@ func main() {
 	userHandler := handler.NewUserHandler(userService, l)
 	tenantHandler := handler.NewTenantHandler(tenantService, l)
 	aiHandler := handler.NewAIHandler(aiService, l)
+	sseHandler := handler.NewSSEHandler(l)
 
 	router := handler.NewRouter(
 		authHandler,
@@ -92,6 +93,7 @@ func main() {
 		userHandler,
 		tenantHandler,
 		aiHandler,
+		sseHandler,
 		cfg,
 		cache,
 		l,

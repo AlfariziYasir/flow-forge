@@ -47,7 +47,7 @@ func main() {
 	}
 	defer pool.Close()
 
-	uow := postgres.NewTransaction(pool)
+	trx := postgres.NewTransaction(pool)
 
 	// Redis
 	cache, err := redis.NewRedisCache(cfg.RedisAddress, cfg.RedisPassword, cfg.RedisDB)
@@ -64,8 +64,8 @@ func main() {
 	b := broadcaster.Init(cache, l.GetZapLogger())
 
 	// Execution Engine & Worker
-	execEngine := workerService.NewExecutionEngine(execRepo, sExecRepo, uow, l, b, 5*time.Minute)
-	jobPoller := workerHandler.NewJobPoller(execRepo, wfRepo, uow, cache, execEngine, l, 5*time.Second)
+	execEngine := workerService.NewExecutionEngine(execRepo, sExecRepo, trx, l, b, 5*time.Minute)
+	jobPoller := workerHandler.NewJobPoller(execRepo, wfRepo, trx, cache, execEngine, l, 5*time.Second)
 
 	// Start Background Worker Poller
 	workerCtx, cancel := context.WithCancel(ctx)

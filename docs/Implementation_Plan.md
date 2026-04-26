@@ -391,3 +391,28 @@ True DAG manipulation at runtime is complex and hard to trace. Instead of modify
 * It will extract a `sub_action` and `sub_parameters` definition from the step.
 * For each item, the engine will inject `{"item": item}` into a local context, evaluate the parameters, and invoke the target Action synchronously (or concurrently via bounded goroutines).
 * The results of all iterations will be aggregated into an array and saved as the single output of the `LOOP` step, making it safe and predictable for downstream steps to consume.
+
+---
+
+## Phase 3: Final Feature Gaps (API & Triggering)
+
+After successfully completing the architectural engine refactor, the following gaps remain between the codebase and the PRD:
+
+### 1. Webhook API Endpoint
+* **Gap:** The engine supports `WAIT_FOR_EVENT` (state suspension), but there is no API endpoint for external webhooks to hit to resume the workflow.
+* **Proposed Fix:** Create a new unauthenticated (or custom-authenticated) endpoint in `router.go`, such as `POST /api/v1/webhooks/executions/{execution_id}/steps/{step_id}`. This handler will parse the incoming payload and directly call `engine.ResumeExecution`.
+
+### 2. Cron Scheduler implementation
+* **Gap:** PRD REQ-2.1 and REQ-2.2 mandate Scheduled (Cron) triggers using Redis distributed locks (`SETNX`) to prevent duplicate job execution across scaled pods. Currently, there is no cron engine.
+* **Proposed Fix:** Implement a background worker (e.g., `cron_poller.go`) that scans the database for active workflows with cron trigger definitions. It will use Redis `SETNX` (with a key like `flowforge:cron:lock:{workflow_id}:{timestamp_minute}`) to ensure only one pod triggers the execution.
+
+### 3. API Pagination Parsing
+* **Gap:** `WorkflowHandler.List` and `ExecutionHandler.List` hardcode pagination parameters (e.g., `PageSize: 50`) and ignore `page_size` and `page_token` URL query parameters.
+* **Proposed Fix:** Update `internal/handler/workflow.go` and `internal/handler/execution.go` to parse `r.URL.Query().Get("page_size")` and `page_token`, validate them, and pass them into the request DTOs.
+
+### 4. Incoming Idempotency Headers
+* **Gap:** While outgoing HTTP steps have idempotency protections, the API endpoints that manually trigger workflows do not enforce incoming `Idempotency-Key` headers. Duplicate requests could spawn duplicate workflow executions.
+* **Proposed Fix:** Add an `IdempotencyMiddleware` in `router.go` that intercepts requests to POST trigger endpoints. It will check Redis (`SETNX`) for the presence of the `Idempotency-Key`. If found, it returns the cached HTTP response; if not, it proceeds and caches the result.
+
+> [!IMPORTANT]
+> **User Review Required:** Which of these final Phase 3 issues would you like to prioritize first? The **Webhook API Endpoint** is highly recommended to finalize the `WAIT_FOR_EVENT` capability.

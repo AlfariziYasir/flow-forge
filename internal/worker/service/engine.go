@@ -36,6 +36,8 @@ type engine struct {
 	registry    *Registry
 	broadcast   Broadcaster
 	stepTimeout time.Duration
+	version     int
+	versionMu   sync.Mutex
 }
 
 func NewExecutionEngine(
@@ -74,8 +76,15 @@ func NewExecutionEngine(
 	}
 }
 
+func (e *engine) nextVersion() int {
+	e.versionMu.Lock()
+	defer e.versionMu.Unlock()
+	e.version++
+	return e.version
+}
+
 func (e *engine) RunExecution(ctx context.Context, execution *model.Execution, workflow *model.Workflow) {
-	// Set tenant context for RLS
+	e.version = execution.Version
 	ctx = jwt.SetContext(ctx, jwt.TenantKey, execution.TenantID)
 
 	e.l.Info("starting execution", zap.String("execution_id", execution.ID), zap.String("workflow_id", workflow.ID), zap.String("tenant_id", execution.TenantID))
@@ -97,7 +106,6 @@ func (e *engine) RunExecution(ctx context.Context, execution *model.Execution, w
 	state := newState()
 	skipMap := &sync.Map{}
 
-	// Rehydration: Pre-load output of already successful steps
 	stepsDb, err := e.stepRepo.ListByExecution(ctx, execution.ID)
 	if err == nil {
 		for _, s := range stepsDb {
@@ -113,6 +121,9 @@ func (e *engine) RunExecution(ctx context.Context, execution *model.Execution, w
 	for _, layer := range execPlan {
 		var wg sync.WaitGroup
 		errs := make(chan error, len(layer))
+
+		layerCtx, cancelLayer := context.WithCancel(ctx)
+
 		for _, stepDef := range layer {
 			wg.Add(1)
 			go func(def model.StepDefinition) {
@@ -122,17 +133,21 @@ func (e *engine) RunExecution(ctx context.Context, execution *model.Execution, w
 					if _, skipped := skipMap.Load(dep); skipped {
 						skipMap.Store(def.ID, true)
 						e.l.Info("skipping step because dependency was skipped", zap.String("step_id", def.ID), zap.String("dep_id", dep))
+						e.broadcastStepStatus(execution.TenantID, def.ID, "SKIPPED", nil)
 						return
 					}
 				}
 
-				err := e.executeStepWithRetry(ctx, execution, def, state, skipMap)
+				stepState := state.Copy()
+				err := e.executeStepWithRetry(layerCtx, execution, def, stepState, skipMap)
 				if err != nil {
 					errs <- err
+					cancelLayer()
 				}
 			}(stepDef)
 		}
 		wg.Wait()
+		cancelLayer()
 		close(errs)
 
 		var suspended bool
@@ -140,7 +155,8 @@ func (e *engine) RunExecution(ctx context.Context, execution *model.Execution, w
 			if err != nil {
 				if errors.Is(err, errorx.ErrSuspendExecution) {
 					e.l.Info("execution suspended", zap.String("execution_id", execution.ID))
-					e.execRepo.Update(ctx, execution.ID, execution.Version+1, map[string]any{
+					ver := e.nextVersion()
+					e.execRepo.Update(ctx, execution.ID, ver, map[string]any{
 						"status":     string(model.StatusExecutionSuspended),
 						"updated_at": time.Now(),
 					})
@@ -160,7 +176,8 @@ func (e *engine) RunExecution(ctx context.Context, execution *model.Execution, w
 		}
 	}
 
-	err = e.execRepo.Update(ctx, execution.ID, execution.Version+1, map[string]any{
+	ver := e.nextVersion()
+	err = e.execRepo.Update(ctx, execution.ID, ver, map[string]any{
 		"status":       string(model.StatusExecutionSuccess),
 		"completed_at": time.Now(),
 	})
@@ -192,7 +209,6 @@ func (e *engine) executeStepWithRetry(
 			return fmt.Errorf("failed to get step execution: %w", err)
 		}
 
-		// Skip if already successful (e.g. during rehydration)
 		if stepExec.Status == string(model.StatusExecutionSuccess) {
 			return nil
 		}
@@ -202,12 +218,20 @@ func (e *engine) executeStepWithRetry(
 			updateMap["started_at"] = time.Now()
 		}
 
-		err = e.stepRepo.Update(ctx, stepExec.ID, updateMap)
+		err = e.stepRepo.Update(ctx, stepExec.ID, stepExec.Version, updateMap)
 		if err != nil {
-			e.l.Warn("failed to update step status to RUNNING", zap.String("step_id", def.ID), zap.Error(err))
+			e.l.Warn(
+				"optimistic lock failed: aborting step execution to prevent duplication",
+				zap.String("execution_id", execution.ID),
+				zap.String("step_id", def.ID),
+				zap.Error(err),
+			)
+			return err
 		}
 
-		e.broadcast.BroadcastToRedis(ctx, execution.TenantID, map[string]any{
+		e.nextVersion()
+
+		go e.broadcast.BroadcastToRedis(ctx, execution.TenantID, map[string]any{
 			"execution_id": execution.ID,
 			"step_id":      def.ID,
 			"status":       "RUNNING",
@@ -245,13 +269,7 @@ func (e *engine) executeStepWithRetry(
 
 			var results []any
 			for idx, item := range items {
-				localState := newState()
-				state.mu.RLock()
-				for k, v := range state.data {
-					localState.data[k] = v
-				}
-				state.mu.RUnlock()
-
+				localState := state.Copy()
 				localState.Set("item", item)
 				localState.Set("index", idx)
 
@@ -287,11 +305,13 @@ func (e *engine) executeStepWithRetry(
 
 		if err != nil {
 			if errors.Is(err, errorx.ErrSuspendExecution) {
-				_ = e.stepRepo.Update(ctx, stepExec.ID, map[string]any{
+				if err := e.stepRepo.Update(ctx, stepExec.ID, stepExec.Version, map[string]any{
 					"status": string(model.StatusExecutionSuspended),
 					"output": result,
-				})
-				_ = e.broadcast.BroadcastToRedis(ctx, execution.TenantID, map[string]any{
+				}); err != nil {
+					e.l.Error("failed to update step to SUSPENDED", zap.Error(err))
+				}
+				go e.broadcast.BroadcastToRedis(ctx, execution.TenantID, map[string]any{
 					"execution_id": execution.ID,
 					"step_id":      def.ID,
 					"status":       "SUSPENDED",
@@ -301,7 +321,7 @@ func (e *engine) executeStepWithRetry(
 			}
 			e.l.Warn("step execution failed", zap.String("step_id", def.ID), zap.Int("attempt", i+1), zap.Error(err))
 
-			retryErr := e.stepRepo.Update(ctx, stepExec.ID, map[string]any{
+			retryErr := e.stepRepo.Update(ctx, stepExec.ID, stepExec.Version, map[string]any{
 				"retry_count": stepExec.RetryCount + 1,
 				"error_log":   err.Error(),
 			})
@@ -315,7 +335,7 @@ func (e *engine) executeStepWithRetry(
 				continue
 			}
 
-			failErr := e.stepRepo.Update(ctx, stepExec.ID, map[string]any{
+			failErr := e.stepRepo.Update(ctx, stepExec.ID, stepExec.Version, map[string]any{
 				"status":       string(model.StatusExecutionFailed),
 				"completed_at": time.Now(),
 				"error_log":    err.Error(),
@@ -324,7 +344,7 @@ func (e *engine) executeStepWithRetry(
 				e.l.Error("failed to update step to FAILED", zap.Error(failErr))
 			}
 
-			e.broadcast.BroadcastToRedis(ctx, execution.TenantID, map[string]any{
+			go e.broadcast.BroadcastToRedis(ctx, execution.TenantID, map[string]any{
 				"execution_id": execution.ID,
 				"step_id":      def.ID,
 				"status":       "FAILED",
@@ -341,13 +361,13 @@ func (e *engine) executeStepWithRetry(
 			}
 		}
 
-		err = e.stepRepo.Update(ctx, stepExec.ID, map[string]any{
+		err = e.stepRepo.Update(ctx, stepExec.ID, stepExec.Version, map[string]any{
 			"status":       string(model.StatusExecutionSuccess),
 			"completed_at": time.Now(),
 			"output":       result,
 		})
 
-		e.broadcast.BroadcastToRedis(ctx, execution.TenantID, map[string]any{
+		go e.broadcast.BroadcastToRedis(ctx, execution.TenantID, map[string]any{
 			"execution_id": execution.ID,
 			"step_id":      def.ID,
 			"status":       "SUCCESS",
@@ -370,7 +390,7 @@ func (e *engine) ResumeExecution(ctx context.Context, executionID string, stepID
 		return fmt.Errorf("step is not suspended")
 	}
 
-	err = e.stepRepo.Update(ctx, stepExec.ID, map[string]any{
+	err = e.stepRepo.Update(ctx, stepExec.ID, stepExec.Version, map[string]any{
 		"status":       string(model.StatusExecutionSuccess),
 		"output":       payload,
 		"completed_at": time.Now(),
@@ -414,13 +434,11 @@ func (e *engine) runCompensation(ctx context.Context, execution *model.Execution
 	}
 
 	// Update execution status to COMPENSATING
-	err = e.execRepo.Update(ctx, execution.ID, execution.Version+1, map[string]any{
+	ver := e.nextVersion()
+	err = e.execRepo.Update(ctx, execution.ID, ver, map[string]any{
 		"status":     string(model.StatusExecutionCompensating),
 		"updated_at": time.Now(),
 	})
-	if err == nil {
-		execution.Version++
-	}
 
 	for _, def := range steps {
 		if def.Action == "COMPENSATION" {
@@ -443,11 +461,13 @@ func (e *engine) runCompensation(ctx context.Context, execution *model.Execution
 				e.l.Info("running compensation step", zap.String("step_id", def.ID), zap.String("target_step", target))
 
 				// Update to RUNNING
-				_ = e.stepRepo.Update(ctx, stepExec.ID, map[string]any{
+				if err := e.stepRepo.Update(ctx, stepExec.ID, stepExec.Version, map[string]any{
 					"status":     string(model.StatusExecutionRunning),
 					"started_at": time.Now(),
-				})
-				_ = e.broadcast.BroadcastToRedis(ctx, execution.TenantID, map[string]any{
+				}); err != nil {
+					e.l.Error("failed to update compensation step to RUNNING", zap.Error(err))
+				}
+				go e.broadcast.BroadcastToRedis(ctx, execution.TenantID, map[string]any{
 					"execution_id": execution.ID,
 					"step_id":      def.ID,
 					"status":       "RUNNING",
@@ -483,12 +503,14 @@ func (e *engine) runCompensation(ctx context.Context, execution *model.Execution
 
 				if subErr != nil {
 					e.l.Error("compensation step failed", zap.String("step_id", def.ID), zap.Error(subErr))
-					_ = e.stepRepo.Update(ctx, stepExec.ID, map[string]any{
+					if err := e.stepRepo.Update(ctx, stepExec.ID, stepExec.Version, map[string]any{
 						"status":       string(model.StatusExecutionFailed),
 						"completed_at": time.Now(),
 						"error_log":    subErr.Error(),
-					})
-					_ = e.broadcast.BroadcastToRedis(ctx, execution.TenantID, map[string]any{
+					}); err != nil {
+						e.l.Error("failed to update compensation step to FAILED", zap.Error(err))
+					}
+					go e.broadcast.BroadcastToRedis(ctx, execution.TenantID, map[string]any{
 						"execution_id": execution.ID,
 						"step_id":      def.ID,
 						"status":       "FAILED",
@@ -496,12 +518,14 @@ func (e *engine) runCompensation(ctx context.Context, execution *model.Execution
 					})
 				} else {
 					e.l.Info("compensation step successful", zap.String("step_id", def.ID))
-					_ = e.stepRepo.Update(ctx, stepExec.ID, map[string]any{
+					if err := e.stepRepo.Update(ctx, stepExec.ID, stepExec.Version, map[string]any{
 						"status":       string(model.StatusExecutionSuccess),
 						"completed_at": time.Now(),
 						"output":       result,
-					})
-					_ = e.broadcast.BroadcastToRedis(ctx, execution.TenantID, map[string]any{
+					}); err != nil {
+						e.l.Error("failed to update compensation step to SUCCESS", zap.Error(err))
+					}
+					go e.broadcast.BroadcastToRedis(ctx, execution.TenantID, map[string]any{
 						"execution_id": execution.ID,
 						"step_id":      def.ID,
 						"status":       "SUCCESS",
@@ -513,8 +537,18 @@ func (e *engine) runCompensation(ctx context.Context, execution *model.Execution
 	}
 }
 
+func (e *engine) broadcastStepStatus(tenantID, stepID, status string, output map[string]any) {
+	go e.broadcast.BroadcastToRedis(context.Background(), tenantID, map[string]any{
+		"execution_id": "",
+		"step_id":      stepID,
+		"status":       status,
+		"output":       output,
+	})
+}
+
 func (e *engine) markExecutionFailed(ctx context.Context, execution *model.Execution, err error) {
-	e.execRepo.Update(ctx, execution.ID, execution.Version+1, map[string]any{
+	ver := e.nextVersion()
+	e.execRepo.Update(ctx, execution.ID, ver, map[string]any{
 		"status":        string(model.StatusExecutionFailed),
 		"error_message": err.Error(),
 		"completed_at":  time.Now(),

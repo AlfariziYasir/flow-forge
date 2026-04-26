@@ -23,6 +23,7 @@ func NewRouter(
 	userHandler *UserHandler,
 	tenantHandler *TenantHandler,
 	aiHandler *AIHandler,
+	sseHandler *SSEHandler,
 	cfg *config.Config,
 	cache redis.Cache,
 	log *logger.Logger,
@@ -48,7 +49,7 @@ func NewRouter(
 			r.Get("logout", authHandler.Logout)
 		})
 
-		r.Get("/monitor/stream", SSEHandler)
+		r.Get("/monitor/stream", sseHandler.Handle)
 
 		r.Route("/workflows", func(r chi.Router) {
 			r.Group(func(r chi.Router) {

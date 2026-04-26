@@ -7,6 +7,8 @@ import (
 	"sync"
 )
 
+var templateRegex = regexp.MustCompile(`\{\{([a-zA-Z0-9_.]+)\}\}`)
+
 type State struct {
 	mu   sync.RWMutex
 	data map[string]any
@@ -33,11 +35,10 @@ func (s *State) Get(stepID string) (any, bool) {
 
 func (s *State) Resolve(params map[string]any) map[string]any {
 	resolved := make(map[string]any)
-	re := regexp.MustCompile(`\{\{([a-zA-Z0-9_.]+)\}\}`)
 
 	for k, v := range params {
 		if strVal, ok := v.(string); ok {
-			resolved[k] = re.ReplaceAllStringFunc(strVal, func(str string) string {
+			resolved[k] = templateRegex.ReplaceAllStringFunc(strVal, func(str string) string {
 				path := strings.Trim(str, "{}")
 				parts := strings.Split(path, ".")
 
@@ -64,6 +65,17 @@ func (s *State) Resolve(params map[string]any) map[string]any {
 		}
 	}
 	return resolved
+}
+
+func (s *State) Copy() *State {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	data := make(map[string]any, len(s.data))
+	for k, v := range s.data {
+		data[k] = v
+	}
+	return &State{data: data}
 }
 
 func navigatePath(data any, path []string) any {

@@ -78,10 +78,9 @@ func (h *WorkflowHandler) List(w http.ResponseWriter, r *http.Request) {
 		errorx.HttpNewError(w, http.StatusUnauthorized, "invalid request")
 		return
 	}
-	
+
 	req := model.ListWorkflowRequest{
 		TenantID: tenantID,
-		PageSize: 50,
 	}
 
 	dtos, count, _, err := h.ws.List(r.Context(), req)
@@ -92,7 +91,7 @@ func (h *WorkflowHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.SuccessWithData(w, http.StatusOK, "success", map[string]interface{}{
-		"data": dtos,
+		"data":  dtos,
 		"total": count,
 	})
 }

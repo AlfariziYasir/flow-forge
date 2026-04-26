@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+var emailRegex = regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
+
 type TransformAction struct{}
 
 func NewTransformAction() *TransformAction {
@@ -32,8 +34,7 @@ func (a *TransformAction) Execute(ctx context.Context, params map[string]any) (m
 		}
 		output = strings.Split(input, sep)
 	case "EXTRACT_EMAIL":
-		re := regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
-		output = re.FindString(input)
+		output = emailRegex.FindString(input)
 	default:
 		return nil, fmt.Errorf("unknown transform operation: %s", operation)
 	}
