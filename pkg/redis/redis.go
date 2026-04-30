@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -25,6 +26,7 @@ type Cache interface {
 	RPush(ctx context.Context, key string, values ...any) error
 	BLPop(ctx context.Context, timeout time.Duration, keys ...string) ([]string, error)
 	Allow(ctx context.Context, key string, limit int, rate int) (bool, error)
+	SetNX(ctx context.Context, key string, value any, ttl time.Duration) (bool, error)
 }
 
 type redisCache struct {
@@ -188,4 +190,19 @@ func (c *redisCache) Allow(ctx context.Context, key string, limit int, rate int)
 	results := res.([]interface{})
 	allowed := results[0].(int64) == 1
 	return allowed, nil
+}
+
+func (c *redisCache) SetNX(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
+	switch v := value.(type) {
+	case string:
+		return c.client.SetNX(ctx, key, v, ttl).Result()
+	case int, int64, float64, bool:
+		return c.client.SetNX(ctx, key, fmt.Sprintf("%v", v), ttl).Result()
+	default:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return false, err
+		}
+		return c.client.SetNX(ctx, key, string(b), ttl).Result()
+	}
 }

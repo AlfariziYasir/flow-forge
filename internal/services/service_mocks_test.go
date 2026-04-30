@@ -290,3 +290,8 @@ func (m *MockCache) Allow(ctx context.Context, key string, limit int, rate int) 
 	args := m.Called(ctx, key, limit, rate)
 	return args.Bool(0), args.Error(1)
 }
+
+func (m *MockCache) SetNX(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
+	args := m.Called(ctx, key, value, ttl)
+	return args.Bool(0), args.Error(1)
+}
