@@ -37,7 +37,6 @@ type engine struct {
 	broadcast   Broadcaster
 	stepTimeout time.Duration
 	version     int
-	versionMu   sync.Mutex
 }
 
 func NewExecutionEngine(
@@ -77,8 +76,6 @@ func NewExecutionEngine(
 }
 
 func (e *engine) nextVersion() int {
-	e.versionMu.Lock()
-	defer e.versionMu.Unlock()
 	e.version++
 	return e.version
 }
@@ -240,6 +237,7 @@ func (e *engine) executeStepWithRetry(
 		params := state.Resolve(def.Parameters)
 		params["_execution_id"] = execution.ID
 		params["_step_id"] = def.ID
+		params["_attempt"] = i
 
 		var result map[string]any
 

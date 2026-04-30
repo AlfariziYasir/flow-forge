@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strconv"
 	"time"
@@ -22,6 +23,7 @@ import (
 
 type WorkflowService interface {
 	Create(ctx context.Context, tenantID string, req *model.WorkflowRequest) (*model.WorkflowResponse, error)
+	CreateFromText(ctx context.Context, tenantID, name, prompt string) (*model.WorkflowResponse, error)
 	Get(ctx context.Context, tenantID, id string) (*model.WorkflowResponse, error)
 	List(ctx context.Context, req model.ListWorkflowRequest) ([]*model.WorkflowResponse, int, string, error)
 	ListVersions(ctx context.Context, tenantID, name string) ([]*model.WorkflowVersion, error)
@@ -35,6 +37,7 @@ type workflowService struct {
 	wRepo repository.WorkflowRepository
 	eRepo repository.ExecutionRepository
 	sRepo repository.StepExecutionRepository
+	aiSvc AIService
 	trx   postgres.Trx
 	cache redis.Cache
 	log   *logger.Logger
@@ -44,6 +47,7 @@ func NewWorkflowService(
 	wRepo repository.WorkflowRepository,
 	eRepo repository.ExecutionRepository,
 	sRepo repository.StepExecutionRepository,
+	aiSvc AIService,
 	trx postgres.Trx,
 	cache redis.Cache,
 	l *logger.Logger,
@@ -52,6 +56,7 @@ func NewWorkflowService(
 		wRepo: wRepo,
 		eRepo: eRepo,
 		sRepo: sRepo,
+		aiSvc: aiSvc,
 		trx:   trx,
 		cache: cache,
 		log:   l,
@@ -109,7 +114,7 @@ func (s *workflowService) Get(ctx context.Context, tenantID, id string) (*model.
 
 	var steps []model.StepDefinition
 	if err := json.Unmarshal(wf.DAGDefinition, &steps); err != nil {
-		s.log.Error("failed to unmarshal dag definition", zap.Error(err), zap.String("id", wf.ID))
+		s.log.Error("failed to unmarshal dag definition", zap.Error(err))
 		return nil, errorx.NewError(errorx.ErrTypeValidation, "invalid dag definition", err)
 	}
 
@@ -140,12 +145,12 @@ func (s *workflowService) List(ctx context.Context, req model.ListWorkflowReques
 	}
 
 	if req.PageSize <= 0 {
-	    req.PageSize = 20 // default
+		req.PageSize = 20 // default
 	}
 	if req.PageSize > 100 {
-	    return nil, 0, "", errorx.NewValidationError(map[string]string{
-	        "page_size": "max page size is 100",
-	    })
+		return nil, 0, "", errorx.NewValidationError(map[string]string{
+			"page_size": "max page size is 100",
+		})
 	}
 
 	filters := map[string]any{
@@ -171,7 +176,7 @@ func (s *workflowService) List(ctx context.Context, req model.ListWorkflowReques
 	for _, wf := range workflows {
 		var steps []model.StepDefinition
 		if err := json.Unmarshal(wf.DAGDefinition, &steps); err != nil {
-			s.log.Error("failed to unmarshal dag definition", zap.Error(err), zap.String("id", wf.ID))
+			s.log.Error("failed to unmarshal dag definition", zap.Error(err))
 			return nil, 0, "", errorx.NewError(errorx.ErrTypeValidation, "invalid dag definition", err)
 		}
 		res = append(res, &model.WorkflowResponse{
@@ -201,7 +206,7 @@ func (s *workflowService) ListVersions(ctx context.Context, tenantID, name strin
 	for _, wf := range workflows {
 		var steps []model.StepDefinition
 		if err := json.Unmarshal(wf.DAGDefinition, &steps); err != nil {
-			s.log.Error("failed to unmarshal dag definition", zap.Error(err), zap.String("id", wf.ID))
+			s.log.Error("failed to unmarshal dag definition", zap.Error(err))
 		}
 		res = append(res, &model.WorkflowVersion{
 			WorkflowID:    wf.ID,
@@ -322,6 +327,99 @@ func (s *workflowService) Rollback(ctx context.Context, req *model.WorkflowRollb
 	return nil
 }
 
+func (s *workflowService) CreateFromText(ctx context.Context, tenantID, name, prompt string) (*model.WorkflowResponse, error) {
+	if s.aiSvc == nil {
+		return nil, fmt.Errorf("AI service not configured")
+	}
+
+	maxRetries := 3
+	var lastErr error
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		steps, err := s.aiSvc.GenerateDAGFromText(ctx, prompt)
+		if err != nil {
+			s.log.Warn("failed to generate DAG from AI", zap.Int("attempt", attempt+1), zap.Error(err))
+			lastErr = err
+			continue
+		}
+
+		if err := s.validateDAG(steps); err != nil {
+			s.log.Warn("DAG validation failed", zap.Int("attempt", attempt+1), zap.Error(err))
+			lastErr = err
+			prompt = fmt.Sprintf("%s\n\nPrevious attempt failed validation: %v. Please correct.", prompt, err)
+			continue
+		}
+
+		dagJSON, err := json.Marshal(steps)
+		if err != nil {
+			return nil, err
+		}
+
+		workflow := model.Workflow{
+			ID:            uuid.New().String(),
+			TenantID:      tenantID,
+			Name:          name,
+			Description:   fmt.Sprintf("Created from AI prompt: %s", prompt),
+			DAGDefinition: dagJSON,
+			CreatedAt:     time.Now(),
+			Version:       1,
+		}
+
+		err = s.wRepo.Create(ctx, &workflow)
+		if err != nil {
+			s.log.Error("failed to create workflow", zap.Error(err))
+			return nil, err
+		}
+
+		return &model.WorkflowResponse{
+			WorkflowID:    workflow.ID,
+			TenantID:      workflow.TenantID,
+			Name:          workflow.Name,
+			Description:   workflow.Description,
+			DAGDefinition: steps,
+			CreatedAt:     workflow.CreatedAt,
+			Version:       workflow.Version,
+			IsActive:      workflow.IsActive,
+			UpdatedAt:     workflow.UpdatedAt,
+		}, nil
+	}
+
+	return nil, fmt.Errorf("failed to create workflow after %d attempts: %w", maxRetries, lastErr)
+}
+
+func (s *workflowService) validateDAG(steps []model.StepDefinition) error {
+	if len(steps) == 0 {
+		return fmt.Errorf("workflow must have at least one step")
+	}
+
+	stepIDs := make(map[string]bool)
+	for _, step := range steps {
+		if step.ID == "" {
+			return fmt.Errorf("step missing required field: id")
+		}
+		if step.Action == "" {
+			return fmt.Errorf("step %s missing required field: action", step.ID)
+		}
+		if stepIDs[step.ID] {
+			return fmt.Errorf("duplicate step id: %s", step.ID)
+		}
+		stepIDs[step.ID] = true
+
+		for _, dep := range step.DependsOn {
+			if !stepIDs[dep] && dep != "" {
+				for _, futureStep := range steps {
+					if futureStep.ID == dep {
+						break
+					}
+				}
+			}
+		}
+	}
+
+	_, err := dag.BuildExecutionPlan(steps)
+	return err
+}
+
 func (s *workflowService) Delete(ctx context.Context, tenantID, name string) error {
 	err := s.wRepo.Delete(ctx, tenantID, name)
 	if err != nil {
@@ -339,16 +437,17 @@ func (s *workflowService) Trigger(ctx context.Context, tenantID, workflowID, tri
 
 	var wf model.Workflow
 	err := s.wRepo.Get(ctx, map[string]any{
-		"id": workflowID,
+		"id":        workflowID,
 		"tenant_id": tenantID,
-		"is_current": true,
 	}, &wf)
 	if err != nil {
+		s.log.Error("failed to get workflow", zap.Error(err))
 		return nil, err
 	}
 
 	txCtx, err := s.trx.Begin(ctx)
 	if err != nil {
+		s.log.Error("failed to begin transaction", zap.Error(err))
 		return nil, err
 	}
 	defer s.trx.Rollback(txCtx)
@@ -371,9 +470,9 @@ func (s *workflowService) Trigger(ctx context.Context, tenantID, workflowID, tri
 	}
 
 	var steps []model.StepDefinition
-	if err := json.Unmarshal(wf.DAGDefinition, &steps); err != nil {
-		s.log.Error("failed to unmarshal dag definition", zap.Error(err), zap.String("id", wf.ID))
-		return nil, errorx.NewError(errorx.ErrTypeInternal, "failed to unmarshal workflow definition", err)
+	if err := wf.GetSteps(&steps); err != nil {
+		s.log.Error("failed to parse workflow steps", zap.Error(err))
+		return nil, errorx.NewError(errorx.ErrTypeInternal, "failed to parse workflow steps", err)
 	}
 
 	for _, stepDef := range steps {
@@ -398,8 +497,10 @@ func (s *workflowService) Trigger(ctx context.Context, tenantID, workflowID, tri
 		return nil, err
 	}
 
-	if s.cache != nil {
-		_ = s.cache.RPush(ctx, "flowforge:jobs:queue", execution.ID)
+	err = s.cache.RPush(ctx, "flowforge:jobs:queue", execution.ID)
+	if err != nil {
+		s.log.Error("failed to enqueue job", zap.Error(err))
+		return nil, errorx.NewError(errorx.ErrTypeInternal, "failed to enqueue job", err)
 	}
 
 	return execution, nil

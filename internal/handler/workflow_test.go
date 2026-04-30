@@ -48,6 +48,10 @@ func (m *mockWFService) Trigger(ctx context.Context, tenantID, workflowID, trigg
 	args := m.Called(ctx, tenantID, workflowID, triggerType)
 	return args.Get(0).(*model.Execution), args.Error(1)
 }
+func (m *mockWFService) CreateFromText(ctx context.Context, tenantID, name, prompt string) (*model.WorkflowResponse, error) {
+	args := m.Called(ctx, tenantID, name, prompt)
+	return args.Get(0).(*model.WorkflowResponse), args.Error(1)
+}
 
 func TestWorkflowHandler_Delete(t *testing.T) {
 	svc := new(mockWFService)

@@ -53,9 +53,13 @@ func (a *HTTPAction) Execute(ctx context.Context, params map[string]any) (map[st
 
 	execID, _ := params["_execution_id"].(string)
 	stepID, _ := params["_step_id"].(string)
+	attempt := 0
+	if a, ok := params["_attempt"].(int); ok {
+		attempt = a
+	}
 	if execID != "" && stepID != "" {
 		h := sha256.New()
-		h.Write([]byte(execID + stepID))
+		h.Write([]byte(fmt.Sprintf("%s:%s:%d", execID, stepID, attempt)))
 		idempotencyKey := hex.EncodeToString(h.Sum(nil))
 		req.Header.Set("Idempotency-Key", idempotencyKey)
 	}
